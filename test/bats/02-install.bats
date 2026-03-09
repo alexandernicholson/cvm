@@ -100,11 +100,12 @@ load "../helpers/common"
 }
 
 @test "install fails when download fails" {
-  MOCK_CURL_FAIL="darwin-arm64/claude" run bash "$CVM_SCRIPT" install 2.1.71
+  MOCK_CURL_FAIL_BINARY=1 run bash "$CVM_SCRIPT" install 2.1.71
   assert_failure
   assert_contains "failed"
-  # Binary should NOT be left behind
+  # Binary should NOT be left behind (check both unix and windows binary names)
   [ ! -f "$CVM_DIR/versions/2.1.71/claude" ]
+  [ ! -f "$CVM_DIR/versions/2.1.71/claude.exe" ]
 }
 
 @test "install cleans up temp file on checksum failure" {

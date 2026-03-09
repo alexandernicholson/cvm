@@ -88,6 +88,11 @@ if [[ -n "${MOCK_CURL_FAIL_NPM:-}" ]] && echo "$url" | grep -qF "registry.npmjs.
   [[ -n "$output_file" ]] && printf '' > "$output_file"
   exit 22
 fi
+# Convenience: fail binary downloads (URLs ending in /claude or /claude.exe)
+if [[ -n "${MOCK_CURL_FAIL_BINARY:-}" ]] && echo "$url" | grep -qE '/(claude|claude\.exe)$'; then
+  [[ -n "$output_file" ]] && printf '' > "$output_file"
+  exit 22
+fi
 
 # Known versions that "exist" in our mock registry
 KNOWN_VERSIONS="2.1.55 2.1.56 2.1.58 2.1.66 2.1.71"
