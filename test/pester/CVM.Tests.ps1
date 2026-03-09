@@ -12,9 +12,23 @@ BeforeAll {
 
     function global:Invoke-Cvm {
         param([string[]]$Arguments = @())
-        $output = & pwsh -NoLogo -NonInteractive -File $script:CvmScript @Arguments 2>&1
-        $script:LastExitCode = $LASTEXITCODE
-        return ($output -join "`n")
+        $processInfo = New-Object System.Diagnostics.ProcessStartInfo
+        $processInfo.FileName = "pwsh"
+        $processInfo.Arguments = @("-NoLogo", "-NonInteractive", "-File", $script:CvmScript) + $Arguments
+        $processInfo.RedirectStandardOutput = $true
+        $processInfo.RedirectStandardError = $true
+        $processInfo.UseShellExecute = $false
+        $processInfo.CreateNoWindow = $true
+
+        $process = New-Object System.Diagnostics.Process
+        $process.StartInfo = $processInfo
+        $process.Start() | Out-Null
+        $output = $process.StandardOutput.ReadToEnd()
+        $errorOutput = $process.StandardError.ReadToEnd()
+        $process.WaitForExit()
+        $script:LastExitCode = $process.ExitCode
+
+        return ($output + $errorOutput).Trim()
     }
 
     function global:New-FakeVersion([string]$Version) {
@@ -141,7 +155,7 @@ Describe "CVM" {
         It "env output contains CVM_DIR path" {
             $out = Invoke-Cvm "env" "--pwsh"
             $script:LastExitCode | Should -Be 0
-            $out | Should -Match [regex]::Escape($env:CVM_DIR)
+            $out | Should -Match ([regex]::Escape($env:CVM_DIR))
         }
 
         It "env unknown shell exits non-zero" {
