@@ -5,7 +5,7 @@
 # are exercised by the bats suite via mock curl.
 
 BeforeAll {
-    $script:CvmScript = Join-Path $PSScriptRoot "..\..\cvm.ps1"
+    $script:CvmScript = (Resolve-Path (Join-Path $PSScriptRoot "..\..\cvm.ps1")).Path
 
     # ── Helper functions ───────────────────────────────────────────────────────
     # Defined inside BeforeAll so they are in scope during test execution.
