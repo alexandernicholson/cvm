@@ -26,11 +26,11 @@ BeforeAll {
         $processInfo.RedirectStandardError = $true
         $processInfo.UseShellExecute = $false
         $processInfo.CreateNoWindow = $true
+        # Set working directory to inherit the current location
+        $processInfo.WorkingDirectory = (Get-Location).Path
 
-        # Explicitly inherit all environment variables
-        foreach ($key in [System.Environment]::GetEnvironmentVariables().Keys) {
-            $processInfo.Environment[$key] = [System.Environment]::GetEnvironmentVariable($key)
-        }
+        # Environment variables are inherited by default
+        # No need to explicitly copy them
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $processInfo
@@ -39,10 +39,34 @@ BeforeAll {
             $script:LastExitCode = 1
             return "Failed to start process"
         }
-        $output = $process.StandardOutput.ReadToEnd()
-        $errorOutput = $process.StandardError.ReadToEnd()
+
+        # Use BeginOutputReadLine and BeginErrorReadLine to avoid deadlock
+        $outputBuilder = New-Object System.Text.StringBuilder
+        $errorBuilder = New-Object System.Text.StringBuilder
+
+        $outputAction = {
+            param($sender, $e)
+            [void]$outputBuilder.AppendLine($e.Data)
+        }
+        $errorAction = {
+            param($sender, $e)
+            [void]$errorBuilder.AppendLine($e.Data)
+        }
+
+        Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action $outputAction | Out-Null
+        Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action $errorAction | Out-Null
+
+        $process.BeginOutputReadLine()
+        $process.BeginErrorReadLine()
         $process.WaitForExit()
+
+        # Get the output
+        $output = $outputBuilder.ToString()
+        $errorOutput = $errorBuilder.ToString()
         $script:LastExitCode = $process.ExitCode
+
+        # Clean up event subscriptions
+        Get-EventSubscriber | Where-Object { $_.SourceObject -eq $process } | ForEach-Object { Unregister-Event $_.SubscriptionId }
 
         $result = if ($output) { $output } else { "" }
         if ($errorOutput) { $result += "`n" + $errorOutput }
