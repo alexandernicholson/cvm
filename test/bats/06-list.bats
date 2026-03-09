@@ -118,3 +118,68 @@ load "../helpers/common"
   assert_success
   assert_contains "2.1.71"
 }
+
+# ── ls-remote source resilience ───────────────────────────────────────────────
+
+@test "ls-remote merges versions from both GitHub and npm" {
+  # Mock: GitHub has 2.1.56-2.1.71 but NOT 2.1.55
+  #       npm has 2.1.55-2.1.71
+  # Combined should have 2.1.55 (npm-only) + the rest
+  run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  assert_contains "2.1.55"
+  assert_contains "2.1.71"
+}
+
+@test "ls-remote deduplicates versions present in both sources" {
+  # 2.1.56, 2.1.58, 2.1.66, 2.1.71 appear in both GitHub and npm
+  # They should appear exactly once in output
+  run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  count=$(echo "$output" | grep -c "2.1.71")
+  [ "$count" -eq 1 ]
+}
+
+@test "ls-remote works when GitHub is unavailable" {
+  MOCK_CURL_FAIL_GITHUB=1 run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  assert_contains "2.1.71"
+  assert_contains "2.1.55"
+}
+
+@test "ls-remote works when npm is unavailable" {
+  MOCK_CURL_FAIL_NPM=1 run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  # GitHub mock has 2.1.56-2.1.71 (not 2.1.55)
+  assert_contains "2.1.71"
+  assert_contains "2.1.56"
+}
+
+@test "ls-remote npm-only version appears when GitHub is unavailable" {
+  # 2.1.55 is only in npm mock; if GitHub is down it must still appear
+  MOCK_CURL_FAIL_GITHUB=1 run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  assert_contains "2.1.55"
+}
+
+@test "ls-remote github-only version would appear when npm is unavailable" {
+  # With only GitHub available, 2.1.56 (GitHub-only relative to npm) still shows
+  MOCK_CURL_FAIL_NPM=1 run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  assert_contains "2.1.56"
+}
+
+@test "ls-remote fails when both GitHub and npm are unavailable" {
+  MOCK_CURL_FAIL_GITHUB=1 MOCK_CURL_FAIL_NPM=1 run bash "$CVM_SCRIPT" ls-remote --all
+  assert_failure
+  assert_contains "unavailable"
+}
+
+@test "ls-remote results are sorted correctly regardless of source order" {
+  run bash "$CVM_SCRIPT" ls-remote --all
+  assert_success
+  # 2.1.55 must appear before 2.1.71
+  line_55=$(echo "$output" | grep -n "2\.1\.55" | cut -d: -f1)
+  line_71=$(echo "$output" | grep -n "2\.1\.71" | cut -d: -f1)
+  [ "$line_55" -lt "$line_71" ]
+}

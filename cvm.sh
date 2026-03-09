@@ -12,6 +12,7 @@ CVM_DEFAULT_FILE="$CVM_DIR/version"
 
 CVM_DIST_BASE="https://storage.googleapis.com/claude-code-dist-86c565f3-f756-42ad-8dfa-d59b1c096819/claude-code-releases"
 CVM_NPM_REGISTRY="https://registry.npmjs.org/@anthropic-ai/claude-code"
+CVM_GITHUB_TAGS="https://api.github.com/repos/anthropics/claude-code/tags"
 CVM_GITHUB_RAW="https://raw.githubusercontent.com/alexandernicholson/cvm/main/cvm.sh"
 
 # ── Colors ───────────────────────────────────────────────────────────────────
@@ -94,21 +95,59 @@ PYEOF
   fi
 }
 
-# List 2.x versions from npm JSON on stdin, sorted
+# Extract 2.x versions from npm registry JSON (unsorted, one per line)
 versions_from_npm() {
   local json="$1"
   if command -v jq &>/dev/null; then
-    echo "$json" | jq -r '.versions | keys[] | select(startswith("2."))' | sort -V
+    echo "$json" | jq -r '.versions | keys[] | select(startswith("2."))'
   elif _py -c "" 2>/dev/null; then
     echo "$json" | _py -c '
 import sys, json
 data = json.load(sys.stdin)
-vs = [v for v in data.get("versions", {}) if v.startswith("2.")]
-vs.sort(key=lambda v: [int(x) for x in v.split(".")])
-print("\n".join(vs))
+for v in data.get("versions", {}):
+    if v.startswith("2."):
+        print(v)
 '
   else
-    die "jq or python3 required for listing remote versions"
+    echo ""
+  fi
+}
+
+# Extract 2.x versions from GitHub tags JSON (unsorted, one per line)
+versions_from_github() {
+  local json="$1"
+  if command -v jq &>/dev/null; then
+    echo "$json" | jq -r '.[].name | ltrimstr("v") | select(startswith("2."))'
+  elif _py -c "" 2>/dev/null; then
+    echo "$json" | _py -c '
+import sys, json
+for t in json.load(sys.stdin):
+    v = t.get("name", "").lstrip("v")
+    if v.startswith("2."):
+        print(v)
+'
+  else
+    echo ""
+  fi
+}
+
+# Sort and deduplicate a newline-separated list of semver strings
+sort_versions() {
+  local input="$1"
+  if _py -c "" 2>/dev/null; then
+    echo "$input" | _py -c '
+import sys
+vs = list({v.strip() for v in sys.stdin if v.strip()})
+try:
+    vs.sort(key=lambda v: [int(x) for x in v.split(".")])
+except Exception:
+    vs.sort()
+print("\n".join(vs))
+'
+  elif command -v sort &>/dev/null; then
+    echo "$input" | grep -v "^$" | sort -u
+  else
+    echo "$input" | grep -v "^$"
   fi
 }
 
@@ -369,16 +408,30 @@ cmd_list_remote() {
   local show_all="${1:-}"
 
   info "Fetching available versions..."
+
+  # Query both sources independently; each is optional so a single outage
+  # doesn't break the command. Results are merged and deduplicated.
+  local gh_versions="" npm_versions=""
+
+  local gh_data
+  if gh_data=$(curl -fsSL --max-time 10 "${CVM_GITHUB_TAGS}?per_page=100" 2>/dev/null); then
+    gh_versions=$(versions_from_github "$gh_data" 2>/dev/null) || gh_versions=""
+  fi
+
   local npm_data
-  npm_data=$(curl -fsSL --max-time 20 "$CVM_NPM_REGISTRY") \
-    || die "Failed to fetch available versions"
+  if npm_data=$(curl -fsSL --max-time 20 "$CVM_NPM_REGISTRY" 2>/dev/null); then
+    npm_versions=$(versions_from_npm "$npm_data" 2>/dev/null) || npm_versions=""
+  fi
+
+  [[ -n "$gh_versions" || -n "$npm_versions" ]] \
+    || die "Failed to fetch available versions (GitHub and npm registry both unavailable)"
 
   local all_versions
-  all_versions=$(versions_from_npm "$npm_data")
+  all_versions=$(sort_versions "$(printf '%s\n%s\n' "$gh_versions" "$npm_versions")")
 
   local latest stable
-  latest=$(curl -fsSL --max-time 10 "$CVM_DIST_BASE/latest" | tr -d '[:space:]')
-  stable=$(curl -fsSL --max-time 10 "$CVM_DIST_BASE/stable" | tr -d '[:space:]')
+  latest=$(curl -fsSL --max-time 10 "$CVM_DIST_BASE/latest" 2>/dev/null | tr -d '[:space:]') || latest=""
+  stable=$(curl -fsSL --max-time 10 "$CVM_DIST_BASE/stable" 2>/dev/null | tr -d '[:space:]') || stable=""
 
   local versions="$all_versions"
   if [[ -z "$show_all" ]]; then

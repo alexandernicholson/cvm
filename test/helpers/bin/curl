@@ -71,8 +71,18 @@ done
 # Log URL for test inspection
 [[ -n "${CURL_LOG:-}" ]] && echo "$url" >> "$CURL_LOG"
 
-# ── Simulate 404 for MOCK_CURL_FAIL pattern ───────────────────────────────────
+# ── Simulate failure for specific URL patterns ────────────────────────────────
 if [[ -n "${MOCK_CURL_FAIL:-}" ]] && echo "$url" | grep -qF "$MOCK_CURL_FAIL"; then
+  [[ -n "$output_file" ]] && printf '' > "$output_file"
+  exit 22
+fi
+# Convenience: fail all GitHub API calls
+if [[ -n "${MOCK_CURL_FAIL_GITHUB:-}" ]] && echo "$url" | grep -qF "api.github.com"; then
+  [[ -n "$output_file" ]] && printf '' > "$output_file"
+  exit 22
+fi
+# Convenience: fail all npm registry calls
+if [[ -n "${MOCK_CURL_FAIL_NPM:-}" ]] && echo "$url" | grep -qF "registry.npmjs.org"; then
   [[ -n "$output_file" ]] && printf '' > "$output_file"
   exit 22
 fi
@@ -109,7 +119,17 @@ case "$url" in
   */claude)
     content="$FAKE_BINARY"
     ;;
+  https://api.github.com/repos/anthropics/claude-code/tags*)
+    # GitHub has 2.1.56, 2.1.58, 2.1.66, 2.1.71 but NOT 2.1.55 (tests dedupe)
+    content='[
+  {"name":"v2.1.71","commit":{"sha":"aaa"}},
+  {"name":"v2.1.66","commit":{"sha":"bbb"}},
+  {"name":"v2.1.58","commit":{"sha":"ccc"}},
+  {"name":"v2.1.56","commit":{"sha":"ddd"}}
+]'
+    ;;
   https://registry.npmjs.org/*)
+    # npm has 2.1.55, 2.1.56, 2.1.58, 2.1.66, 2.1.71 (2.1.55 is npm-only)
     content='{
   "name": "@anthropic-ai/claude-code",
   "versions": {
