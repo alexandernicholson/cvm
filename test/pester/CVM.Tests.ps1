@@ -12,65 +12,20 @@ BeforeAll {
 
     function global:Invoke-Cvm {
         param([string[]]$Arguments = @())
-        # Build arguments as a single string to ensure proper passing
-        $argList = "-NoLogo", "-NonInteractive", "-File", "`"$script:CvmScript`""
-        foreach ($arg in $Arguments) {
-            $argList += "`"$arg`""
+        $oldLocation = Get-Location
+        try {
+            # Run pwsh script and capture all streams
+            $output = & pwsh -NoLogo -NonInteractive -File $script:CvmScript @Arguments 2>&1
+            $script:LastExitCode = $LASTEXITCODE
+            # Handle null output
+            if (-not $output) {
+                return ""
+            }
+            return ($output -join "`n")
+        } finally {
+            # Ensure we're back in the right location
+            Set-Location $oldLocation -ErrorAction SilentlyContinue
         }
-        $processArgs = $argList -join " "
-
-        $processInfo = New-Object System.Diagnostics.ProcessStartInfo
-        $processInfo.FileName = "pwsh"
-        $processInfo.Arguments = $processArgs
-        $processInfo.RedirectStandardOutput = $true
-        $processInfo.RedirectStandardError = $true
-        $processInfo.UseShellExecute = $false
-        $processInfo.CreateNoWindow = $true
-        # Set working directory to inherit the current location
-        $processInfo.WorkingDirectory = (Get-Location).Path
-
-        # Environment variables are inherited by default
-        # No need to explicitly copy them
-
-        $process = New-Object System.Diagnostics.Process
-        $process.StartInfo = $processInfo
-        $started = $process.Start()
-        if (-not $started) {
-            $script:LastExitCode = 1
-            return "Failed to start process"
-        }
-
-        # Use BeginOutputReadLine and BeginErrorReadLine to avoid deadlock
-        $outputBuilder = New-Object System.Text.StringBuilder
-        $errorBuilder = New-Object System.Text.StringBuilder
-
-        $outputAction = {
-            param($sender, $e)
-            [void]$outputBuilder.AppendLine($e.Data)
-        }
-        $errorAction = {
-            param($sender, $e)
-            [void]$errorBuilder.AppendLine($e.Data)
-        }
-
-        Register-ObjectEvent -InputObject $process -EventName OutputDataReceived -Action $outputAction | Out-Null
-        Register-ObjectEvent -InputObject $process -EventName ErrorDataReceived -Action $errorAction | Out-Null
-
-        $process.BeginOutputReadLine()
-        $process.BeginErrorReadLine()
-        $process.WaitForExit()
-
-        # Get the output
-        $output = $outputBuilder.ToString()
-        $errorOutput = $errorBuilder.ToString()
-        $script:LastExitCode = $process.ExitCode
-
-        # Clean up event subscriptions
-        Get-EventSubscriber | Where-Object { $_.SourceObject -eq $process } | ForEach-Object { Unregister-Event $_.SubscriptionId }
-
-        $result = if ($output) { $output } else { "" }
-        if ($errorOutput) { $result += "`n" + $errorOutput }
-        return $result.Trim()
     }
 
     function global:New-FakeVersion([string]$Version) {
