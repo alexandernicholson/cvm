@@ -79,6 +79,6 @@ load "../helpers/common"
 @test "cvm env prints PATH export line" {
   run bash "$CVM_SCRIPT" env
   assert_success
-  assert_contains ".cvm/bin"
+  assert_contains "$CVM_DIR/bin"
   assert_contains "PATH"
 }

@@ -31,29 +31,44 @@ chmod +x "$CVM_BIN/cvm"
 ok "CVM installed to $CVM_BIN/cvm"
 echo ""
 
-# Detect shell and rc file
+# ── Shell detection ───────────────────────────────────────────────────────────
+SHELL_NAME=$(basename "${SHELL:-bash}")
+
 detect_rc_file() {
-  local shell_name
-  shell_name=$(basename "${SHELL:-bash}")
-  case "$shell_name" in
-    zsh)   echo "$HOME/.zshrc" ;;
-    fish)  echo "$HOME/.config/fish/config.fish" ;;
-    *)     echo "$HOME/.bashrc" ;;
+  case "$SHELL_NAME" in
+    zsh)  echo "$HOME/.zshrc" ;;
+    fish) echo "$HOME/.config/fish/config.fish" ;;
+    *)    echo "$HOME/.bashrc" ;;
+  esac
+}
+
+# Return the correct PATH setup line for the detected shell.
+path_setup_line() {
+  case "$SHELL_NAME" in
+    fish) echo "fish_add_path ${CVM_BIN}" ;;
+    *)    echo "export PATH=\"${CVM_BIN}:\$PATH\"" ;;
+  esac
+}
+
+# Return a shell-appropriate "reload" hint.
+reload_hint() {
+  case "$SHELL_NAME" in
+    fish) echo "source ~/.config/fish/config.fish" ;;
+    *)    echo "source $(detect_rc_file)" ;;
   esac
 }
 
 RC_FILE=$(detect_rc_file)
-EXPORT_LINE='export PATH="$HOME/.cvm/bin:$PATH"'
+SETUP_LINE=$(path_setup_line)
 
 # Check if already in PATH
 if echo "${PATH:-}" | tr ':' '\n' | grep -qx "$CVM_BIN"; then
   ok "~/.cvm/bin is already in your PATH"
 else
-  # Offer to add to rc file
   echo -e "${BOLD}Shell setup${RESET}"
-  echo "Add this to your shell rc file to use cvm:"
+  echo "Add this line to your shell config (${SHELL_NAME}):"
   echo ""
-  echo "  $EXPORT_LINE"
+  echo "  $SETUP_LINE"
   echo ""
 
   if [[ -f "$RC_FILE" ]] && ! grep -qF '.cvm/bin' "$RC_FILE" 2>/dev/null; then
@@ -62,9 +77,9 @@ else
     if [[ ! "$confirm" =~ ^[Nn]$ ]]; then
       echo "" >> "$RC_FILE"
       echo "# CVM - Claude (Code) Version Manager" >> "$RC_FILE"
-      echo "$EXPORT_LINE" >> "$RC_FILE"
+      echo "$SETUP_LINE" >> "$RC_FILE"
       ok "Added to $RC_FILE"
-      echo "  Reload with: source $RC_FILE"
+      echo "  Reload with: $(reload_hint)"
     else
       echo "  Add it manually, then reload your shell."
     fi

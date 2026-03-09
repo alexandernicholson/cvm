@@ -460,15 +460,48 @@ cmd_self_uninstall() {
   rm -rf "$CVM_DIR"
   ok "CVM removed."
   echo ""
-  echo "Remove the following line from your shell rc file (~/.bashrc, ~/.zshrc):"
-  echo -e "  ${DIM}export PATH=\"\$HOME/.cvm/bin:\$PATH\"${RESET}"
+  echo "Remove the CVM PATH line from your shell config:"
+  echo -e "  bash/zsh  ${DIM}~/.bashrc or ~/.zshrc${RESET}"
+  echo -e "  fish      ${DIM}~/.config/fish/config.fish${RESET}"
+}
+
+# ── Shell Helpers ─────────────────────────────────────────────────────────────
+
+# Normalise a shell path or name to a short name: bash, zsh, fish, sh, …
+_shell_name() {
+  basename "${1:-${SHELL:-bash}}"
+}
+
+# Emit the correct PATH setup line for the given shell name.
+_path_setup_line() {
+  local shell_name="$1"
+  case "$shell_name" in
+    fish) printf 'fish_add_path %s/bin\n' "$CVM_DIR" ;;
+    *)    printf 'export PATH="%s/bin:$PATH"\n' "$CVM_DIR" ;;
+  esac
+}
+
+# Return the conventional rc file path for a shell name.
+_rc_file_for_shell() {
+  local shell_name="$1"
+  case "$shell_name" in
+    zsh)  echo "$HOME/.zshrc" ;;
+    fish) echo "$HOME/.config/fish/config.fish" ;;
+    *)    echo "$HOME/.bashrc" ;;
+  esac
 }
 
 cmd_env() {
-  # Print shell setup snippet (for eval or manual copy)
-  cat <<'EOF'
-export PATH="$HOME/.cvm/bin:$PATH"
-EOF
+  local shell_name
+  case "${1:-}" in
+    --fish|fish)   shell_name="fish" ;;
+    --zsh|zsh)     shell_name="zsh" ;;
+    --bash|bash)   shell_name="bash" ;;
+    --sh|sh)       shell_name="sh" ;;
+    "")            shell_name=$(_shell_name) ;;
+    *)             die "Unknown shell: ${1}. Supported: bash, zsh, fish, sh" ;;
+  esac
+  _path_setup_line "$shell_name"
 }
 
 cmd_help() {
@@ -499,8 +532,15 @@ ${BOLD}VERSION RESOLUTION ORDER${RESET}
   3. ~/.cvm/version (global default, set by ${BOLD}cvm use${RESET})
 
 ${BOLD}SHELL SETUP${RESET}
-  Add this to ~/.bashrc or ~/.zshrc:
+  Run ${BOLD}cvm env${RESET} to print the right line for your current shell, or:
+
+  bash / zsh — add to ~/.bashrc or ~/.zshrc:
     ${DIM}export PATH="\$HOME/.cvm/bin:\$PATH"${RESET}
+
+  fish — add to ~/.config/fish/config.fish:
+    ${DIM}fish_add_path \$HOME/.cvm/bin${RESET}
+
+  Flags: ${DIM}cvm env --bash${RESET}  ${DIM}cvm env --zsh${RESET}  ${DIM}cvm env --fish${RESET}
 
 ${BOLD}EXAMPLES${RESET}
   cvm install latest          Install latest available version
@@ -538,7 +578,7 @@ main() {
     uninstall|remove)       cmd_uninstall "$@" ;;
     self-update)            cmd_self_update ;;
     self-uninstall)         cmd_self_uninstall ;;
-    env)                    cmd_env ;;
+    env)                    cmd_env "$@" ;;
     version|--version|-v)  echo "cvm $CVM_SELF_VERSION" ;;
     help|--help|-h)         cmd_help ;;
     *)
