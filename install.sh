@@ -66,7 +66,7 @@ if echo "${PATH:-}" | tr ':' '\n' | grep -qx "$CVM_BIN"; then
   ok "~/.cvm/bin is already in your PATH"
 else
   echo -e "${BOLD}Shell setup${RESET}"
-  echo "Add this line to your shell config (${SHELL_NAME}):"
+  echo "Add this line to your shell config (${RC_FILE}):"
   echo ""
   echo "  $SETUP_LINE"
   echo ""

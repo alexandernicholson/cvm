@@ -6,39 +6,39 @@
 
 BeforeAll {
     $script:CvmScript = Join-Path $PSScriptRoot "..\..\cvm.ps1"
-}
 
-# ── Helper functions ──────────────────────────────────────────────────────────
-# (defined at file scope so all Describe blocks can use them)
+    # ── Helper functions ───────────────────────────────────────────────────────
+    # Defined inside BeforeAll so they are in scope during test execution.
 
-function Invoke-Cvm {
-    param([string[]]$Arguments = @())
-    $output = & pwsh -NoLogo -NonInteractive -File $script:CvmScript @Arguments 2>&1
-    $script:LastExitCode = $LASTEXITCODE
-    return ($output -join "`n")
-}
+    function global:Invoke-Cvm {
+        param([string[]]$Arguments = @())
+        $output = & pwsh -NoLogo -NonInteractive -File $script:CvmScript @Arguments 2>&1
+        $script:LastExitCode = $LASTEXITCODE
+        return ($output -join "`n")
+    }
 
-function New-FakeVersion([string]$Version) {
-    $dir = Join-Path $env:CVM_DIR "versions" $Version
-    $null = New-Item -ItemType Directory -Path $dir -Force
-    $bin = Join-Path $dir "claude.exe"
-    Set-Content -Path $bin -Value "fake" -NoNewline
-    return $bin
-}
+    function global:New-FakeVersion([string]$Version) {
+        $dir = Join-Path $env:CVM_DIR "versions" $Version
+        $null = New-Item -ItemType Directory -Path $dir -Force
+        $bin = Join-Path $dir "claude.exe"
+        Set-Content -Path $bin -Value "fake" -NoNewline
+        return $bin
+    }
 
-function Set-GlobalDefault([string]$Version) {
-    $src = New-FakeVersion $Version
-    $binDir = Join-Path $env:CVM_DIR "bin"
-    $null = New-Item -ItemType Directory -Path $binDir -Force
-    $link = Join-Path $binDir "claude.exe"
-    if (Test-Path $link) { Remove-Item $link -Force }
-    try   { $null = New-Item -ItemType HardLink -Path $link -Target $src }
-    catch { Copy-Item $src $link -Force }
-    $Version | Set-Content (Join-Path $env:CVM_DIR "version")
+    function global:Set-GlobalDefault([string]$Version) {
+        $src = New-FakeVersion $Version
+        $binDir = Join-Path $env:CVM_DIR "bin"
+        $null = New-Item -ItemType Directory -Path $binDir -Force
+        $link = Join-Path $binDir "claude.exe"
+        if (Test-Path $link) { Remove-Item $link -Force }
+        try   { $null = New-Item -ItemType HardLink -Path $link -Target $src }
+        catch { Copy-Item $src $link -Force }
+        $Version | Set-Content (Join-Path $env:CVM_DIR "version")
+    }
 }
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# All tests live inside this outer Describe so BeforeEach/AfterEach are legal.
+# All tests live inside this outer Describe so BeforeEach/AfterEach are scoped.
 # ═══════════════════════════════════════════════════════════════════════════════
 
 Describe "CVM" {
