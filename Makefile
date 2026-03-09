@@ -1,4 +1,4 @@
-.PHONY: test test-verbose lint install-bats help
+.PHONY: test test-verbose test-ps lint install-bats help
 
 BATS        := bats
 CVM_SCRIPT  := cvm.sh
@@ -8,9 +8,10 @@ TEST_DIR    := test/bats
 
 help:
 	@echo "Targets:"
-	@echo "  test          Run full test suite"
+	@echo "  test          Run full test suite (bats)"
 	@echo "  test-verbose  Run tests with verbose (tap) output"
-	@echo "  lint          Syntax-check cvm.sh and install.sh"
+	@echo "  test-ps       Run PowerShell Pester tests (requires pwsh)"
+	@echo "  lint          Syntax-check cvm.sh, install.sh, and mock helpers"
 	@echo "  install-bats  Install bats-core via Homebrew or npm"
 
 test: _check-bats lint
@@ -21,6 +22,15 @@ test: _check-bats lint
 
 test-verbose: _check-bats lint
 	@$(BATS) --tap $(TEST_DIR)/*.bats
+
+test-ps:
+	@command -v pwsh >/dev/null 2>&1 || { echo "Error: pwsh not installed"; exit 1; }
+	@pwsh -NoLogo -NonInteractive -Command "\
+		\$$config = New-PesterConfiguration; \
+		\$$config.Run.Path = 'test/pester/CVM.Tests.ps1'; \
+		\$$config.Output.Verbosity = 'Detailed'; \
+		\$$config.Run.Exit = \$$true; \
+		Invoke-Pester -Configuration \$$config"
 
 lint:
 	@bash -n $(CVM_SCRIPT)  && echo "✓ cvm.sh syntax OK"
