@@ -203,6 +203,7 @@ update_symlink() {
   local link="$CVM_BIN/claude"
 
   [[ -f "$target" ]] || die "Version $version not installed at $target"
+  mkdir -p "$(dirname "$link")"
   ln -sf "$target" "$link"
 }
 
@@ -549,4 +550,4 @@ main() {
   esac
 }
 
-main "$@"
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && main "$@"

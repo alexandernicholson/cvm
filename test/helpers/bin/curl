@@ -1,0 +1,139 @@
+#!/usr/bin/env bash
+# Mock curl for CVM tests.
+# Intercepts all HTTP calls made by cvm.sh, returns canned responses.
+set -euo pipefail
+
+# ── Fake binary content (must match between manifest checksum and binary write) ──
+FAKE_BINARY='#!/usr/bin/env bash
+echo "Claude Code mock"'
+
+# ── Detect platform (mirrors cvm.sh logic) ────────────────────────────────────
+_platform() {
+  local os arch
+  os=$(uname -s); arch=$(uname -m)
+  # Rosetta 2
+  if [[ "$os" == "Darwin" && "$arch" == "x86_64" ]]; then
+    sysctl -n machdep.cpu.brand_string 2>/dev/null | grep -q "Apple" && arch="arm64"
+  fi
+  case "$os" in
+    Darwin)
+      case "$arch" in arm64|aarch64) echo "darwin-arm64";; *) echo "darwin-x64";; esac ;;
+    Linux)
+      local m=""
+      ldd /bin/sh 2>/dev/null | grep -q musl && m="-musl"
+      case "$arch" in aarch64|arm64) echo "linux-arm64${m}";; *) echo "linux-x64${m}";; esac ;;
+    *) echo "linux-x64" ;;
+  esac
+}
+PLATFORM=$(_platform)
+
+# ── Compute checksum of fake binary ───────────────────────────────────────────
+if command -v sha256sum >/dev/null 2>&1; then
+  CKSUM=$(printf '%s\n' "$FAKE_BINARY" | sha256sum | awk '{print $1}')
+else
+  CKSUM=$(printf '%s\n' "$FAKE_BINARY" | shasum -a 256 | awk '{print $1}')
+fi
+
+# ── Parse arguments ───────────────────────────────────────────────────────────
+url=""; output_file=""; skip_next=0
+for arg in "$@"; do
+  if [[ $skip_next -eq 1 ]]; then skip_next=0; continue; fi
+  case "$arg" in
+    -o|--output) skip_next=1
+      # peek at next arg: re-parse with index
+      ;;
+    --max-time|--connect-timeout) skip_next=1 ;;
+    -f|-s|-S|-L|-fsSL|-fL|-fsl|--progress-bar|-fsSL|-fsSL) : ;;
+    http*) url="$arg" ;;
+  esac
+done
+
+# Re-parse to correctly capture -o FILE
+i=0; args=("$@")
+while [[ $i -lt ${#args[@]} ]]; do
+  case "${args[$i]}" in
+    -o|--output)
+      i=$((i+1))
+      output_file="${args[$i]}"
+      ;;
+    --max-time|--connect-timeout)
+      i=$((i+1))  # skip the value
+      ;;
+    http*)
+      url="${args[$i]}"
+      ;;
+  esac
+  i=$((i+1))
+done
+
+[[ -n "$url" ]] || { echo "mock curl: no URL found in: $*" >&2; exit 1; }
+
+# Log URL for test inspection
+[[ -n "${CURL_LOG:-}" ]] && echo "$url" >> "$CURL_LOG"
+
+# ── Simulate 404 for MOCK_CURL_FAIL pattern ───────────────────────────────────
+if [[ -n "${MOCK_CURL_FAIL:-}" ]] && echo "$url" | grep -qF "$MOCK_CURL_FAIL"; then
+  [[ -n "$output_file" ]] && printf '' > "$output_file"
+  exit 22
+fi
+
+# Known versions that "exist" in our mock registry
+KNOWN_VERSIONS="2.1.55 2.1.56 2.1.58 2.1.66 2.1.71"
+
+# Simulate 404 for unknown version paths
+if echo "$url" | grep -qE '/[0-9]+\.[0-9]+\.[0-9]+/'; then
+  ver=$(echo "$url" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+  found=0
+  for v in $KNOWN_VERSIONS; do
+    [[ "$v" == "$ver" ]] && found=1
+  done
+  if [[ $found -eq 0 ]]; then
+    [[ -n "$output_file" ]] && printf '' > "$output_file"
+    exit 22
+  fi
+fi
+
+# ── Route by URL ──────────────────────────────────────────────────────────────
+content=""
+case "$url" in
+  */latest)
+    content="2.1.71"
+    ;;
+  */stable)
+    content="2.1.58"
+    ;;
+  */manifest.json)
+    ver=$(echo "$url" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
+    content="{\"version\":\"${ver}\",\"buildDate\":\"2026-01-01T00:00:00Z\",\"platforms\":{\"${PLATFORM}\":{\"binary\":\"claude\",\"checksum\":\"${CKSUM}\",\"size\":100}}}"
+    ;;
+  */claude)
+    content="$FAKE_BINARY"
+    ;;
+  https://registry.npmjs.org/*)
+    content='{
+  "name": "@anthropic-ai/claude-code",
+  "versions": {
+    "2.1.55": {}, "2.1.56": {}, "2.1.58": {}, "2.1.66": {}, "2.1.71": {}
+  },
+  "dist-tags": { "latest": "2.1.71", "stable": "2.1.58" }
+}'
+    ;;
+  https://raw.githubusercontent.com/*)
+    # self-update: return a minimal valid cvm script
+    content='#!/usr/bin/env bash
+# CVM mock update
+CVM_SELF_VERSION="99.0.0"
+echo "cvm 99.0.0"
+[[ "${BASH_SOURCE[0]}" == "${0}" ]] && echo "cvm 99.0.0"'
+    ;;
+  *)
+    echo "mock curl: unhandled URL: $url" >&2
+    exit 1
+    ;;
+esac
+
+if [[ -n "$output_file" ]]; then
+  printf '%s\n' "$content" > "$output_file"
+else
+  printf '%s\n' "$content"
+fi
