@@ -368,10 +368,10 @@ cmd_list() {
 cmd_list_remote() {
   local show_all="${1:-}"
 
-  info "Fetching available versions from npm registry..."
+  info "Fetching available versions..."
   local npm_data
   npm_data=$(curl -fsSL --max-time 20 "$CVM_NPM_REGISTRY") \
-    || die "Failed to fetch npm registry data"
+    || die "Failed to fetch available versions"
 
   local all_versions
   all_versions=$(versions_from_npm "$npm_data")
