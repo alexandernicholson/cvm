@@ -1,0 +1,8 @@
+#!/usr/bin/env bash
+# Mock uname that reports a Windows Git Bash (MINGW64) environment.
+# Used by 10-windows.bats to test Windows-specific code paths.
+case "$1" in
+  -s) echo "MINGW64_NT-10.0-19041" ;;
+  -m) echo "x86_64" ;;
+  *)  echo "MINGW64_NT-10.0-19041" ;;
+esac

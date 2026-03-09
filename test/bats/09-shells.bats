@@ -98,7 +98,7 @@ run_in_shell() {
 }
 
 @test "env: unknown shell flag exits non-zero" {
-  run bash "$CVM_SCRIPT" env --powershell
+  run bash "$CVM_SCRIPT" env --notashell
   assert_failure
   assert_contains "Supported"
 }

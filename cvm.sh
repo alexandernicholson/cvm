@@ -61,9 +61,27 @@ detect_platform() {
         *) die "Unsupported Linux architecture: $arch" ;;
       esac
       ;;
-    *)
-      die "Unsupported OS: $os. CVM supports macOS and Linux."
+    MINGW*|MSYS*)
+      case "$arch" in
+        x86_64)        echo "win32-x64" ;;
+        aarch64|arm64) echo "win32-arm64" ;;
+        *) die "Unsupported Windows architecture: $arch" ;;
+      esac
       ;;
+    CYGWIN*)
+      echo "win32-x64"
+      ;;
+    *)
+      die "Unsupported OS: $os. CVM supports macOS, Linux, and Windows (Git Bash/MSYS2/Cygwin)."
+      ;;
+  esac
+}
+
+# Returns the binary filename for a given platform (claude or claude.exe)
+binary_name_for_platform() {
+  case "${1:-}" in
+    win32-*) echo "claude.exe" ;;
+    *)       echo "claude" ;;
   esac
 }
 
@@ -238,12 +256,17 @@ cvm_resolve_version() {
 # ── Symlink Management ────────────────────────────────────────────────────────
 update_symlink() {
   local version="$1"
-  local target="$CVM_VERSIONS/$version/claude"
-  local link="$CVM_BIN/claude"
+  local platform
+  platform=$(detect_platform)
+  local bin_name
+  bin_name=$(binary_name_for_platform "$platform")
+  local target="$CVM_VERSIONS/$version/$bin_name"
+  local link="$CVM_BIN/$bin_name"
 
   [[ -f "$target" ]] || die "Version $version not installed at $target"
   mkdir -p "$(dirname "$link")"
-  ln -sf "$target" "$link"
+  # Windows (Git Bash): ln -sf may fail without Developer Mode; fall back to copy
+  ln -sf "$target" "$link" 2>/dev/null || cp -f "$target" "$link"
 }
 
 # ── Directory Setup ───────────────────────────────────────────────────────────
@@ -266,9 +289,11 @@ cmd_install() {
 
   local platform
   platform=$(detect_platform)
+  local bin_name
+  bin_name=$(binary_name_for_platform "$platform")
 
   local version_dir="$CVM_VERSIONS/$version"
-  local binary_path="$version_dir/claude"
+  local binary_path="$version_dir/$bin_name"
 
   if [[ -f "$binary_path" ]]; then
     ok "Claude Code $version already installed"
@@ -294,7 +319,7 @@ cmd_install() {
   checksum=$(checksum_from_manifest "$platform" "$manifest")
 
   # Download binary to cache (atomic: download then move)
-  local binary_url="$CVM_DIST_BASE/$version/$platform/claude"
+  local binary_url="$CVM_DIST_BASE/$version/$platform/$bin_name"
   local tmp_file
   tmp_file=$(mktemp "$CVM_CACHE/claude-${version}-XXXXXX")
 
@@ -371,7 +396,11 @@ cmd_which() {
   version=$(cvm_resolve_version) \
     || die "No version active. Run: cvm use <version>"
 
-  local binary="$CVM_VERSIONS/$version/claude"
+  local platform
+  platform=$(detect_platform)
+  local bin_name
+  bin_name=$(binary_name_for_platform "$platform")
+  local binary="$CVM_VERSIONS/$version/$bin_name"
   [[ -f "$binary" ]] \
     || die "Version $version is not installed. Run: cvm install $version"
 
@@ -529,8 +558,9 @@ _shell_name() {
 _path_setup_line() {
   local shell_name="$1"
   case "$shell_name" in
-    fish) printf 'fish_add_path %s/bin\n' "$CVM_DIR" ;;
-    *)    printf 'export PATH="%s/bin:$PATH"\n' "$CVM_DIR" ;;
+    fish)             printf 'fish_add_path %s/bin\n' "$CVM_DIR" ;;
+    pwsh|powershell)  printf '$env:PATH = "%s\\bin;$env:PATH"\n' "$CVM_DIR" ;;
+    *)                printf 'export PATH="%s/bin:$PATH"\n' "$CVM_DIR" ;;
   esac
 }
 
@@ -538,21 +568,23 @@ _path_setup_line() {
 _rc_file_for_shell() {
   local shell_name="$1"
   case "$shell_name" in
-    zsh)  echo "$HOME/.zshrc" ;;
-    fish) echo "$HOME/.config/fish/config.fish" ;;
-    *)    echo "$HOME/.bashrc" ;;
+    zsh)              echo "$HOME/.zshrc" ;;
+    fish)             echo "$HOME/.config/fish/config.fish" ;;
+    pwsh|powershell)  echo "$HOME/Documents/PowerShell/profile.ps1" ;;
+    *)                echo "$HOME/.bashrc" ;;
   esac
 }
 
 cmd_env() {
   local shell_name
   case "${1:-}" in
-    --fish|fish)   shell_name="fish" ;;
-    --zsh|zsh)     shell_name="zsh" ;;
-    --bash|bash)   shell_name="bash" ;;
-    --sh|sh)       shell_name="sh" ;;
-    "")            shell_name=$(_shell_name) ;;
-    *)             die "Unknown shell: ${1}. Supported: bash, zsh, fish, sh" ;;
+    --fish|fish)                         shell_name="fish" ;;
+    --zsh|zsh)                           shell_name="zsh" ;;
+    --bash|bash)                         shell_name="bash" ;;
+    --sh|sh)                             shell_name="sh" ;;
+    --pwsh|--powershell|pwsh|powershell) shell_name="pwsh" ;;
+    "")                                  shell_name=$(_shell_name) ;;
+    *)  die "Unknown shell: ${1}. Supported: bash, zsh, fish, sh, pwsh" ;;
   esac
   _path_setup_line "$shell_name"
 }
@@ -593,7 +625,10 @@ ${BOLD}SHELL SETUP${RESET}
   fish — add to ~/.config/fish/config.fish:
     ${DIM}fish_add_path \$HOME/.cvm/bin${RESET}
 
-  Flags: ${DIM}cvm env --bash${RESET}  ${DIM}cvm env --zsh${RESET}  ${DIM}cvm env --fish${RESET}
+  PowerShell — add to \$PROFILE:
+    ${DIM}\$env:PATH = "\$env:USERPROFILE\.cvm\bin;\$env:PATH"${RESET}
+
+  Flags: ${DIM}cvm env --bash${RESET}  ${DIM}cvm env --zsh${RESET}  ${DIM}cvm env --fish${RESET}  ${DIM}cvm env --pwsh${RESET}
 
 ${BOLD}EXAMPLES${RESET}
   cvm install latest          Install latest available version

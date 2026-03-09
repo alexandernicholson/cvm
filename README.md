@@ -27,13 +27,23 @@ cvm local 2.1.71          # pin a project directory
 
 ## Installation
 
+### macOS / Linux / WSL / Git Bash
+
 ```bash
 curl -fsSL https://raw.githubusercontent.com/alexandernicholson/cvm/main/install.sh | bash
 ```
 
 The installer downloads CVM to `~/.cvm/bin/cvm`, detects your shell, and offers to add the PATH line to your config automatically.
 
-### Manual installation
+### Windows (native PowerShell)
+
+```powershell
+irm https://raw.githubusercontent.com/alexandernicholson/cvm/main/install.ps1 | iex
+```
+
+This downloads `cvm.ps1` to `~\.cvm\bin\`, creates a `cvm.cmd` wrapper so `cvm` works from both PowerShell and CMD, and adds `~\.cvm\bin` to your user PATH.
+
+### Manual installation (bash)
 
 ```bash
 mkdir -p ~/.cvm/bin
@@ -46,13 +56,14 @@ chmod +x ~/.cvm/bin/cvm
 
 ## Shell Setup
 
-Add `~/.cvm/bin` to your PATH. Run `cvm env` to print the correct line for your shell:
+Add `~/.cvm/bin` (or `%USERPROFILE%\.cvm\bin` on Windows) to your PATH. Run `cvm env` to print the correct line for your shell:
 
 ```bash
 cvm env           # auto-detects your shell
 cvm env --bash    # force bash syntax
 cvm env --zsh     # force zsh syntax
 cvm env --fish    # force fish syntax
+cvm env --pwsh    # force PowerShell syntax
 ```
 
 | Shell | Config file | Line to add |
@@ -60,6 +71,7 @@ cvm env --fish    # force fish syntax
 | bash | `~/.bashrc` | `export PATH="$HOME/.cvm/bin:$PATH"` |
 | zsh | `~/.zshrc` | `export PATH="$HOME/.cvm/bin:$PATH"` |
 | fish | `~/.config/fish/config.fish` | `fish_add_path $HOME/.cvm/bin` |
+| PowerShell | `$PROFILE` | `$env:PATH = "$env:USERPROFILE\.cvm\bin;$env:PATH"` |
 
 After adding the line, reload your shell (`source ~/.zshrc` or open a new terminal).
 
@@ -219,8 +231,11 @@ Claude Code native binaries are served by Anthropic from a GCS bucket. CVM downl
 | `linux-x64` | Linux (glibc) | x86_64 |
 | `linux-arm64-musl` | Linux (musl/Alpine) | ARM64 |
 | `linux-x64-musl` | Linux (musl/Alpine) | x86_64 |
+| `win32-x64` | Windows (Git Bash/PowerShell) | x86_64 |
 
-CVM auto-detects your platform, including Rosetta 2 on Apple Silicon Macs and musl on Alpine Linux.
+CVM auto-detects your platform, including Rosetta 2 on Apple Silicon Macs, musl on Alpine Linux, and MINGW64/MSYS2/Cygwin on Windows.
+
+> **WSL users**: Use the standard Linux install above. WSL runs a real Linux environment, so `linux-x64` binaries work correctly.
 
 ---
 
@@ -266,12 +281,13 @@ Tests use [bats-core](https://github.com/bats-core/bats-core) with a mock `curl`
 | `07-uninstall.bats` | 13 | removal, active version handling |
 | `08-edge-cases.bats` | 14 | self-update, self-uninstall, idempotency |
 | `09-shells.bats` | 51 | bash/zsh/fish compatibility |
+| `10-windows.bats` | 12 | Windows platform detection, `.exe` binary, win32-x64 paths |
 
 ### Contributing
 
 1. Fork and clone the repo
 2. Make changes to `cvm.sh` or `install.sh`
-3. Run `make test` — all 173 tests must pass
+3. Run `make test` — all 185 tests must pass
 4. Open a pull request
 
 ---

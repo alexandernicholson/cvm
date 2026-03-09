@@ -22,6 +22,8 @@ _platform() {
       local m=""
       ldd /bin/sh 2>/dev/null | grep -q musl && m="-musl"
       case "$arch" in aarch64|arm64) echo "linux-arm64${m}";; *) echo "linux-x64${m}";; esac ;;
+    MINGW*|MSYS*) echo "win32-x64" ;;
+    CYGWIN*)      echo "win32-x64" ;;
     *) echo "linux-x64" ;;
   esac
 }
@@ -114,9 +116,13 @@ case "$url" in
     ;;
   */manifest.json)
     ver=$(echo "$url" | grep -oE '[0-9]+\.[0-9]+\.[0-9]+' | head -1)
-    content="{\"version\":\"${ver}\",\"buildDate\":\"2026-01-01T00:00:00Z\",\"platforms\":{\"${PLATFORM}\":{\"binary\":\"claude\",\"checksum\":\"${CKSUM}\",\"size\":100}}}"
+    case "$PLATFORM" in
+      win32-*) BIN_NAME="claude.exe" ;;
+      *)       BIN_NAME="claude" ;;
+    esac
+    content="{\"version\":\"${ver}\",\"buildDate\":\"2026-01-01T00:00:00Z\",\"platforms\":{\"${PLATFORM}\":{\"binary\":\"${BIN_NAME}\",\"checksum\":\"${CKSUM}\",\"size\":100}}}"
     ;;
-  */claude)
+  */claude|*/claude.exe)
     content="$FAKE_BINARY"
     ;;
   https://api.github.com/repos/anthropics/claude-code/tags*)

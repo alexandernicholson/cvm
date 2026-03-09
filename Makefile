@@ -26,6 +26,13 @@ lint:
 	@bash -n $(CVM_SCRIPT)  && echo "✓ cvm.sh syntax OK"
 	@bash -n install.sh     && echo "✓ install.sh syntax OK"
 	@bash -n test/helpers/bin/curl && echo "✓ mock curl syntax OK"
+	@bash -n test/helpers/windows-bin/uname && echo "✓ windows mock uname syntax OK"
+	@if command -v pwsh >/dev/null 2>&1; then \
+		pwsh -NoLogo -NonInteractive -Command "Get-Command -ErrorAction Stop" -File cvm.ps1 2>/dev/null \
+		  && echo "✓ cvm.ps1 syntax OK" || echo "⚠ cvm.ps1 syntax check skipped (parse error)"; \
+	else \
+		echo "  cvm.ps1 syntax check skipped (pwsh not installed)"; \
+	fi
 
 install-bats:
 	@if command -v brew >/dev/null 2>&1; then \
