@@ -27,6 +27,11 @@ BeforeAll {
         $processInfo.UseShellExecute = $false
         $processInfo.CreateNoWindow = $true
 
+        # Explicitly inherit all environment variables
+        foreach ($key in [System.Environment]::GetEnvironmentVariables().Keys) {
+            $processInfo.Environment[$key] = [System.Environment]::GetEnvironmentVariable($key)
+        }
+
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $processInfo
         $started = $process.Start()
