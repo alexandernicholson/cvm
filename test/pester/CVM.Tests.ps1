@@ -12,9 +12,16 @@ BeforeAll {
 
     function global:Invoke-Cvm {
         param([string[]]$Arguments = @())
+        # Build arguments as a single string to ensure proper passing
+        $argList = "-NoLogo", "-NonInteractive", "-File", "`"$script:CvmScript`""
+        foreach ($arg in $Arguments) {
+            $argList += "`"$arg`""
+        }
+        $processArgs = $argList -join " "
+
         $processInfo = New-Object System.Diagnostics.ProcessStartInfo
         $processInfo.FileName = "pwsh"
-        $processInfo.Arguments = @("-NoLogo", "-NonInteractive", "-File", $script:CvmScript) + $Arguments
+        $processInfo.Arguments = $processArgs
         $processInfo.RedirectStandardOutput = $true
         $processInfo.RedirectStandardError = $true
         $processInfo.UseShellExecute = $false
@@ -22,13 +29,19 @@ BeforeAll {
 
         $process = New-Object System.Diagnostics.Process
         $process.StartInfo = $processInfo
-        $process.Start() | Out-Null
+        $started = $process.Start()
+        if (-not $started) {
+            $script:LastExitCode = 1
+            return "Failed to start process"
+        }
         $output = $process.StandardOutput.ReadToEnd()
         $errorOutput = $process.StandardError.ReadToEnd()
         $process.WaitForExit()
         $script:LastExitCode = $process.ExitCode
 
-        return ($output + $errorOutput).Trim()
+        $result = if ($output) { $output } else { "" }
+        if ($errorOutput) { $result += "`n" + $errorOutput }
+        return $result.Trim()
     }
 
     function global:New-FakeVersion([string]$Version) {
