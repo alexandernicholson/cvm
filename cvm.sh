@@ -512,19 +512,19 @@ ${BOLD}USAGE${RESET}
   cvm <command> [args]
 
 ${BOLD}COMMANDS${RESET}
-  ${BOLD}install${RESET} <version>      Install a Claude Code version
-                         (version: semver, ${GREEN}latest${RESET}, ${BLUE}stable${RESET})
-  ${BOLD}use${RESET} <version>          Set the global (system-wide) active version
-  ${BOLD}local${RESET} <version>        Set per-directory version (writes .claude-version)
+  ${BOLD}install${RESET} <version>     Install a Claude Code version
+                        (version: semver, ${GREEN}latest${RESET}, ${BLUE}stable${RESET})
+  ${BOLD}use${RESET} <version>         Set the global (system-wide) active version
+  ${BOLD}local${RESET} <version>       Set per-directory version (writes .claude-version)
   ${BOLD}current${RESET}               Show the currently resolved version
   ${BOLD}which${RESET}                 Print path to the active claude binary
-  ${BOLD}ls${RESET}, ${BOLD}list${RESET}             List installed versions
+  ${BOLD}ls${RESET}, ${BOLD}list${RESET}              List installed versions
   ${BOLD}ls-remote${RESET} [--all]     List versions available for download
   ${BOLD}uninstall${RESET} <version>   Remove an installed version
   ${BOLD}self-update${RESET}           Update CVM itself
   ${BOLD}self-uninstall${RESET}        Remove CVM and all installed versions
   ${BOLD}env${RESET}                   Print the PATH export line for shell setup
-  ${BOLD}version${RESET}              Show CVM version
+  ${BOLD}version${RESET}               Show CVM version
 
 ${BOLD}VERSION RESOLUTION ORDER${RESET}
   1. \$CVM_VERSION environment variable
