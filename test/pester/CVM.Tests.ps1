@@ -12,11 +12,12 @@ BeforeAll {
 
     function global:Invoke-Cvm {
         param([string[]]$Arguments = @())
-        $oldLocation = Get-Location.Path
+        $oldLocation = (Get-Location).Path
         try {
-            # Build the command line properly
-            # Use a script block to ensure arguments are passed as positional args to the script
-            $output = & pwsh -NoLogo -NonInteractive -Command "& `"$script:CvmScript`" $Arguments" 2>&1
+            # Use -File with -- terminator so arguments starting with - or -- are
+            # passed as positional values to the script rather than being interpreted
+            # as named parameters by PowerShell's parameter binder.
+            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -File $script:CvmScript -- @Arguments 2>&1
             $script:LastExitCode = $LASTEXITCODE
             # Handle null output
             if (-not $output) {
