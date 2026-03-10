@@ -14,10 +14,15 @@ BeforeAll {
         param([string[]]$Arguments = @())
         $oldLocation = (Get-Location).Path
         try {
-            # Use -File with -- terminator so arguments starting with - or -- are
-            # passed as positional values to the script rather than being interpreted
-            # as named parameters by PowerShell's parameter binder.
-            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -File $script:CvmScript -- @Arguments 2>&1
+            # Build a -Command string using array literal splatting @('a','--b').
+            # This forces positional binding in the subprocess, bypassing PowerShell's
+            # named-parameter interpretation for dash-prefixed values like --version,
+            # --help, --pwsh, etc.  cvm.ps1 has [CmdletBinding(PositionalBinding=$false)]
+            # which would reject those as unknown named parameters if passed directly.
+            $escapedScript = $script:CvmScript -replace "'", "''"
+            $escapedArgs   = ($Arguments | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ", "
+            $cmd = "& '$escapedScript' @($escapedArgs)"
+            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1
             $script:LastExitCode = $LASTEXITCODE
             # Handle null output
             if (-not $output) {
