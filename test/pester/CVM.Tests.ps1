@@ -12,26 +12,29 @@ BeforeAll {
 
     function global:Invoke-Cvm {
         param([string[]]$Arguments = @())
-        $oldLocation = (Get-Location).Path
+        # Use Start-Process so that:
+        #   1. $proc.ExitCode reliably reflects exit N in cvm.ps1 (not $LASTEXITCODE ambiguity)
+        #   2. Each argument is passed as a discrete token (no dash-prefix mis-parsing by pwsh)
+        #   3. stdout/stderr are captured via temp files (no 2>&1 interference)
+        $tmpOut = [System.IO.Path]::GetTempFileName()
+        $tmpErr = [System.IO.Path]::GetTempFileName()
         try {
-            # Build a -Command string using array literal splatting @('a','--b').
-            # This forces positional binding in the subprocess, bypassing PowerShell's
-            # named-parameter interpretation for dash-prefixed values like --version,
-            # --help, --pwsh, etc.  cvm.ps1 has [CmdletBinding(PositionalBinding=$false)]
-            # which would reject those as unknown named parameters if passed directly.
-            # Use -File so that exit N in cvm.ps1 sets the process exit code.
-            # cvm.ps1 now parses $args directly (no param() block) so dash-prefixed
-            # values like --version, --pwsh are passed as raw strings via @Arguments.
-            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -File $script:CvmScript @Arguments 2>&1
-            $script:LastExitCode = $LASTEXITCODE
-            # Handle null output
-            if (-not $output) {
-                return ""
-            }
-            return ($output -join "`n")
+            $procArgs = @("-NoLogo", "-NonInteractive", "-ExecutionPolicy", "Bypass",
+                          "-File", $script:CvmScript) + $Arguments
+            $proc = Start-Process pwsh `
+                        -ArgumentList $procArgs `
+                        -Wait -PassThru -NoNewWindow `
+                        -RedirectStandardOutput $tmpOut `
+                        -RedirectStandardError  $tmpErr `
+                        -WorkingDirectory (Get-Location).Path
+            $script:LastExitCode = $proc.ExitCode
+            $outText = if ((Get-Item $tmpOut).Length -gt 0) { Get-Content $tmpOut -Raw } else { "" }
+            $errText = if ((Get-Item $tmpErr).Length -gt 0) { Get-Content $tmpErr -Raw } else { "" }
+            $combined = "$outText$errText"
+            return $combined
         } finally {
-            # Ensure we're back in the right location
-            Set-Location $oldLocation -ErrorAction SilentlyContinue
+            Remove-Item $tmpOut -Force -ErrorAction SilentlyContinue
+            Remove-Item $tmpErr -Force -ErrorAction SilentlyContinue
         }
     }
 

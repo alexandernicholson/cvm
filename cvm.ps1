@@ -171,7 +171,7 @@ function Get-ActiveVersion {
             if ($v) { return $v }
         }
         $parent = Split-Path $dir -Parent
-        if ($parent -eq $dir) { break }
+        if ([string]::IsNullOrEmpty($parent) -or $parent -eq $dir) { break }
         $dir = $parent
     }
 
