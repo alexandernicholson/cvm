@@ -19,15 +19,10 @@ BeforeAll {
             # named-parameter interpretation for dash-prefixed values like --version,
             # --help, --pwsh, etc.  cvm.ps1 has [CmdletBinding(PositionalBinding=$false)]
             # which would reject those as unknown named parameters if passed directly.
-            $escapedScript = $script:CvmScript -replace "'", "''"
-            $escapedArgs   = ($Arguments | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ", "
-            # Assign args to a variable then splat with @varName.
-            # @varName splatting maps each element to a positional parameter,
-            # bypassing named-parameter matching for dash-prefixed values.
-            # @('a','--b') in call position is an array expression (single arg),
-            # not splatting — only @variableName is true positional splatting.
-            $cmd = "`$__a = @($escapedArgs); & '$escapedScript' @__a"
-            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1
+            # Use -File so that exit N in cvm.ps1 sets the process exit code.
+            # cvm.ps1 now parses $args directly (no param() block) so dash-prefixed
+            # values like --version, --pwsh are passed as raw strings via @Arguments.
+            $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -File $script:CvmScript @Arguments 2>&1
             $script:LastExitCode = $LASTEXITCODE
             # Handle null output
             if (-not $output) {

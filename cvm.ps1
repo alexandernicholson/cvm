@@ -3,11 +3,11 @@
 # https://github.com/alexandernicholson/cvm
 #Requires -Version 5.1
 
-[CmdletBinding(PositionalBinding=$false)]
-param(
-    [Parameter(Position=0)][string]$Command = "help",
-    [Parameter(ValueFromRemainingArguments=$true)][string[]]$CmdArgs = @()
-)
+# Parse arguments from $args so that dash-prefixed values like --version,
+# --help, --pwsh are received as plain strings rather than being interpreted
+# as named parameters by PowerShell's CmdletBinding binder.
+$Command = if ($args.Count -gt 0) { $args[0] } else { "help" }
+$CmdArgs = if ($args.Count -gt 1) { @($args[1..($args.Count - 1)]) } else { @() }
 
 Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
