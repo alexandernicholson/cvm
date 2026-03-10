@@ -11,7 +11,10 @@ BeforeAll {
     # Defined inside BeforeAll so they are in scope during test execution.
 
     function global:Invoke-Cvm {
-        param([string[]]$Arguments = @())
+        param(
+            [Parameter(ValueFromRemainingArguments=$true)]
+            [string[]]$Arguments = @()
+        )
         # Use Start-Process so that:
         #   1. $proc.ExitCode reliably reflects exit N in cvm.ps1 (not $LASTEXITCODE ambiguity)
         #   2. Each argument is passed as a discrete token (no dash-prefix mis-parsing by pwsh)
