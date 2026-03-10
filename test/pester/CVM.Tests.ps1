@@ -21,7 +21,12 @@ BeforeAll {
             # which would reject those as unknown named parameters if passed directly.
             $escapedScript = $script:CvmScript -replace "'", "''"
             $escapedArgs   = ($Arguments | ForEach-Object { "'" + ($_ -replace "'", "''") + "'" }) -join ", "
-            $cmd = "& '$escapedScript' @($escapedArgs)"
+            # Assign args to a variable then splat with @varName.
+            # @varName splatting maps each element to a positional parameter,
+            # bypassing named-parameter matching for dash-prefixed values.
+            # @('a','--b') in call position is an array expression (single arg),
+            # not splatting — only @variableName is true positional splatting.
+            $cmd = "`$__a = @($escapedArgs); & '$escapedScript' @__a"
             $output = & pwsh -NoLogo -NonInteractive -ExecutionPolicy Bypass -Command $cmd 2>&1
             $script:LastExitCode = $LASTEXITCODE
             # Handle null output
