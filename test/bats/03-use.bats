@@ -3,7 +3,7 @@
 
 load "../helpers/common"
 
-@test "use sets symlink to specified version" {
+@test "use installs wrapper that execs the specified version" {
   make_fake_version "2.1.58"
   make_fake_version "2.1.71"
   set_global_default "2.1.58"
@@ -11,9 +11,12 @@ load "../helpers/common"
   run bash "$CVM_SCRIPT" use 2.1.71
   assert_success
 
-  [ -L "$CVM_DIR/bin/claude" ]
-  link_target=$(readlink "$CVM_DIR/bin/claude")
-  [[ "$link_target" == *"2.1.71/claude" ]]
+  # Wrapper is a regular file (not a symlink) and execs the 2.1.71 binary.
+  [ -f "$CVM_DIR/bin/claude" ]
+  [ ! -L "$CVM_DIR/bin/claude" ]
+  run "$CVM_DIR/bin/claude"
+  assert_success
+  assert_contains "Claude Code mock v2.1.71"
 }
 
 @test "use updates global default file" {
@@ -66,8 +69,10 @@ load "../helpers/common"
   make_fake_version "2.1.71"
   run bash "$CVM_SCRIPT" default 2.1.71
   assert_success
-  link_target=$(readlink "$CVM_DIR/bin/claude")
-  [[ "$link_target" == *"2.1.71/claude" ]]
+  [ -f "$CVM_DIR/bin/claude" ]
+  run "$CVM_DIR/bin/claude"
+  assert_success
+  assert_contains "Claude Code mock v2.1.71"
 }
 
 @test "use can switch between multiple installed versions" {

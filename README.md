@@ -107,9 +107,14 @@ cvm ls-remote --all
 | `cvm ls` | List installed versions |
 | `cvm ls-remote [--all]` | List versions available for download |
 | `cvm uninstall <version>` | Remove an installed version |
+| `cvm plugin <install\|list\|update\|uninstall>` | Manage cvm plugins |
 | `cvm env [--bash\|--zsh\|--fish]` | Print the PATH setup line for your shell |
 | `cvm self-update` | Update CVM itself to the latest version |
 | `cvm self-uninstall` | Remove CVM and all installed Claude Code versions |
+
+Plugins can also register their own subcommands — for example, after installing
+the [cvp](https://github.com/alexandernicholson/cvp) profile manager you get
+`cvm profile use <name>` to switch gateway/keys per-directory or globally.
 
 ### Install channels
 
@@ -166,9 +171,36 @@ flowchart TD
 
 ---
 
+## Plugins
+
+CVM can install plugins — git repos that register new `cvm <command> ...`
+subcommands. Plugins live in `~/.cvm/plugins/<name>/` and ship a `plugin.sh`
+that declares `CVM_PLUGIN_COMMAND` and a `cvm_plugin_main()` handler.
+
+```bash
+cvm plugin install alexandernicholson/cvp   # install the profile manager
+cvm plugin list
+cvm profile use work                        # subcommand registered by cvp
+cvm plugin uninstall cvp
+```
+
+### Env hooks
+
+The active `claude` on your PATH is a bash wrapper (on macOS/Linux). Before
+exec'ing the real versioned binary it sources every `~/.cvm/env.d/*.sh`, so
+plugins can inject environment variables (e.g. `ANTHROPIC_BASE_URL`,
+`CLAUDE_CODE_OAUTH_TOKEN`, feature flags) into every `claude` invocation. The
+[cvp](https://github.com/alexandernicholson/cvp) profile plugin uses this hook to
+switch profiles per-directory or globally without losing any saved keys/URLs.
+
+> Windows native (PowerShell/`cvm.ps1`) keeps the legacy symlink model; the
+> env-hook wrapper is bash/Git-Bash only.
+
+---
+
 ## Architecture
 
-CVM is a single bash script with no runtime dependencies beyond `bash`, `curl`, and either `python3` or `jq`. It uses the symlink-switching model from `tfenv` and `rbenv`.
+CVM is a single bash script with no runtime dependencies beyond `bash`, `curl`, and either `python3` or `jq`. It uses the shim/wrapper model from `tfenv` and `rbenv`: `~/.cvm/bin/claude` is a generated wrapper that resolves the active version and sources env hooks before exec'ing the real binary.
 
 ```mermaid
 graph TD
@@ -182,15 +214,18 @@ graph TD
     D --> LS[cmd_list]
     D --> LR[cmd_list_remote]
     D --> UN[cmd_uninstall]
+    D --> PL[cmd_plugin]
+    D --> PD2[_plugin_dispatch]
 
     I --> PD[detect_platform]
     I --> DL["Download binary<br>GCS bucket"]
     I --> CV[verify_checksum<br>SHA256 from manifest]
-    I --> SYM[update_symlink]
+    I --> SYM[install_claude_shim]
 
     LR --> GH["GitHub tags API"]
     LR --> NP["npm registry"]
     LR --> MR[Merge + deduplicate<br>sort_versions]
+    PL --> GI["git clone ~/.cvm/plugins"]
 ```
 
 ### Directory layout
@@ -199,12 +234,14 @@ graph TD
 ~/.cvm/
 ├── bin/
 │   ├── cvm             ← CVM script itself
-│   └── claude          → symlink to active version binary
+│   └── claude          ← wrapper: resolves version, sources env.d/*.sh, execs binary
 ├── versions/
 │   ├── 2.1.58/
 │   │   └── claude      ← downloaded native binary
 │   └── 2.1.71/
 │       └── claude
+├── plugins/            ← installed plugins (one dir per plugin, with plugin.sh)
+├── env.d/              ← env hooks sourced by the claude wrapper (*.sh)
 ├── version             ← global default (plain text, e.g. "2.1.71")
 └── cache/              ← temporary download staging (cleaned after install)
 ```
@@ -259,7 +296,7 @@ Full documentation lives in [`docs/`](docs/):
 ## Development
 
 ```bash
-make test           # run all 173 tests
+make test           # run all 206 tests
 make test-verbose   # TAP output
 make lint           # bash -n syntax check
 make install-bats   # install bats-core (via Homebrew or npm)
@@ -273,21 +310,23 @@ Tests use [bats-core](https://github.com/bats-core/bats-core) with a mock `curl`
 |---|---|---|
 | `00-help.bats` | 12 | help, version, unknown commands |
 | `01-version-resolution.bats` | 11 | env var, walk-up, global default |
-| `02-install.bats` | 16 | install, channels, checksums |
-| `03-use.bats` | 10 | global switching, symlinks |
+| `02-install.bats` | 17 | install, channels, checksums, env-hook wrapper |
+| `03-use.bats` | 10 | global switching, wrapper exec |
 | `04-local.bats` | 9 | per-directory `.claude-version` |
-| `05-current-which.bats` | 15 | current/which resolution |
+| `05-current-which.bats` | 12 | current/which resolution |
 | `06-list.bats` | 22 | ls, ls-remote, dual-source resilience |
-| `07-uninstall.bats` | 13 | removal, active version handling |
-| `08-edge-cases.bats` | 14 | self-update, self-uninstall, idempotency |
+| `07-uninstall.bats` | 12 | removal, active version handling |
+| `08-edge-cases.bats` | 17 | self-update, self-uninstall, idempotency |
 | `09-shells.bats` | 51 | bash/zsh/fish compatibility |
 | `10-windows.bats` | 12 | Windows platform detection, `.exe` binary, win32-x64 paths |
+| `11-shim.bats` | 7 | `claude` wrapper: version resolution + env.d hooks |
+| `12-plugin.bats` | 14 | plugin manager: install/list/update/uninstall + dispatch |
 
 ### Contributing
 
 1. Fork and clone the repo
 2. Make changes to `cvm.sh` or `install.sh`
-3. Run `make test` — all 185 tests must pass
+3. Run `make test` — all 206 tests must pass
 4. Open a pull request
 
 ---

@@ -15,6 +15,7 @@ CVM (Claude Code Version Manager) lets you install multiple versions of the [Cla
 - [Listing Versions](#listing-versions)
 - [Removing Versions](#removing-versions)
 - [Updating CVM](#updating-cvm)
+- [Plugins & Profiles](#plugins--profiles)
 - [Uninstalling CVM](#uninstalling-cvm)
 - [Environment Variables](#environment-variables)
 - [Troubleshooting](#troubleshooting)
@@ -228,6 +229,72 @@ Update CVM itself to the latest version:
 ```bash
 cvm self-update
 ```
+
+---
+
+## Plugins & Profiles
+
+### Plugins
+
+CVM can install plugins — git repos that add new `cvm <command> ...` subcommands.
+
+```bash
+cvm plugin install alexandernicholson/cvp   # the profile manager
+cvm plugin list
+cvm plugin update cvp
+cvm plugin uninstall cvp
+```
+
+A plugin is a git repo with a `plugin.sh` that declares `CVM_PLUGIN_COMMAND`
+and a `cvm_plugin_main()` handler. When you run `cvm <command> ...` and
+`<command>` isn't a core CVM command, CVM looks for a plugin that registered it
+and delegates.
+
+### Env hooks
+
+The active `claude` on your PATH is a bash wrapper (macOS/Linux). Before
+exec'ing the real versioned binary it sources every `~/.cvm/env.d/*.sh`, so
+plugins can inject environment variables into every `claude` invocation.
+(The Windows native / PowerShell path keeps the legacy symlink model.)
+
+### Profiles (via the [cvp](https://github.com/alexandernicholson/cvp) plugin)
+
+`cvp` lets you define named profiles of environment variables — e.g. a custom
+inference gateway with `ANTHROPIC_BASE_URL`, `CLAUDE_CODE_OAUTH_TOKEN`, and
+`CLAUDE_CODE_EXPERIMENTAL_AGENT_TEAMS` — and switch them per-directory **or**
+globally, **without losing any saved keys or URLs**.
+
+The global "active profile" is just an **alias** (a name in `~/.cvm/active-profile`)
+pointing at a profile definition stored in `~/.cvm/profiles/<name>.env`.
+Switching profiles only rewrites the alias; the profile settings are never
+touched, so you can switch back and forth freely.
+
+```bash
+cvm plugin install alexandernicholson/cvp
+cvm profile add work            # create/edit a profile (prompts for vars)
+cvm profile use work            # set the global alias
+cvm profile local work          # pin this directory to a profile
+cvm profile current             # show the resolved profile
+cvm profile ls
+cvm profile show                # display the active profile (secrets masked)
+cvm profile env                 # print `export` lines (for `eval`)
+```
+
+Profile resolution order (applied per `claude` invocation by the env hook):
+
+```
+$CVM_PROFILE env var          (highest priority)
+    ↓
+.claude-profile file          (walks up from $PWD to /)
+    ↓
+~/.cvm/active-profile         (global alias, set by cvm profile use)
+    ↓
+(none — no profile applied)
+```
+
+Because resolution happens at runtime inside the wrapper, a per-directory
+`.claude-profile` takes effect for `claude` in that tree without any shell
+reload.
 
 ---
 

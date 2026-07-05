@@ -65,17 +65,51 @@ CVM is a single bash script (`cvm.sh`) with no runtime dependencies beyond `bash
 ~/.cvm/
 ├── bin/
 │   ├── cvm             ← CVM script itself
-│   └── claude          → symlink to active version binary
+│   └── claude          ← wrapper: resolves version, sources env.d/*.sh, execs binary
 ├── versions/
 │   ├── 2.1.58/
 │   │   └── claude      ← downloaded native binary
 │   └── 2.1.71/
 │       └── claude
+├── plugins/            ← installed plugins (one dir per plugin, with plugin.sh)
+├── env.d/              ← env hooks sourced by the claude wrapper (*.sh)
 ├── version             ← global default (plain text, e.g. "2.1.71")
 └── cache/              ← temporary download staging (cleaned after install)
 ```
 
-The `~/.cvm/bin` directory is the only directory that needs to be on `$PATH`. The `claude` symlink in it always points to the active version's binary.
+The `~/.cvm/bin` directory is the only directory that needs to be on `$PATH`. The `claude` entry in it is a generated bash wrapper (`install_claude_shim` / `_write_claude_wrapper`) that resolves the active version (same order as `cvm_resolve_version`), sources every `~/.cvm/env.d/*.sh`, then `exec`s the real versioned binary. On win32 the legacy symlink/copy is kept (the env-hook wrapper is bash/Git-Bash only; native PowerShell users go through `cvm.ps1`).
+
+---
+
+## Plugin Manager & Env Hooks
+
+**Plugins** live in `~/.cvm/plugins/<name>/` and ship a `plugin.sh` that sets:
+
+```bash
+CVM_PLUGIN_NAME="cvp"
+CVM_PLUGIN_COMMAND="profile"      # the subcommand this plugin registers
+CVM_PLUGIN_VERSION="0.1.0"
+CVM_PLUGIN_DESCRIPION="…"
+cvm_plugin_main() { … "$@"; }     # invoked with args after the subcommand
+```
+
+`cvm plugin install <owner/repo|url>` does a `git clone --depth 1` into
+`~/.cvm/plugins/<name>/`. Dispatch (`_plugin_dispatch`) runs when `main()`
+receives a non-core command: it scans plugin dirs, sources each `plugin.sh` in a
+throwaway subshell to read `CVM_PLUGIN_COMMAND`, and on a match runs
+`cvm_plugin_main` in a subshell that inherits CVM's helper functions
+(`err`/`info`/`ok`/`warn`/`die`) but is otherwise isolated. A plugin's
+non-zero exit code is captured via `(...) || rc=$?` (to defeat `errexit`) and
+propagated through the `_CVM_PLUGIN_RC` global.
+
+**Env hooks**: because the `claude` wrapper sources `~/.cvm/env.d/*.sh` before
+`exec`, a plugin can drop a resolver script there to inject environment
+variables per invocation. The `cvp` profile plugin installs
+`~/.cvm/env.d/cvp.sh`, which resolves the active profile (`$CVM_PROFILE` →
+`.claude-profile` walk-up → `~/.cvm/active-profile`) and `export`s that
+profile's variables — so per-directory profiles take effect at runtime with no
+shell reload, and switching the global alias never touches the stored profile
+files.
 
 ---
 

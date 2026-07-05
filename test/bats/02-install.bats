@@ -21,17 +21,28 @@ load "../helpers/common"
   [ -x "$CVM_DIR/versions/2.1.71/claude" ]
 }
 
-@test "install creates bin symlink when first install" {
+@test "install creates bin wrapper when first install" {
   run bash "$CVM_SCRIPT" install 2.1.71
   assert_success
-  [ -L "$CVM_DIR/bin/claude" ]
+  # Wrapper is a regular bash file (not a symlink) and is executable.
+  [ -f "$CVM_DIR/bin/claude" ]
+  [ ! -L "$CVM_DIR/bin/claude" ]
+  [ -x "$CVM_DIR/bin/claude" ]
+  head -1 "$CVM_DIR/bin/claude" | grep -q "bash"
 }
 
-@test "install symlink points to installed binary" {
+@test "install wrapper sources env.d and execs the installed binary" {
   run bash "$CVM_SCRIPT" install 2.1.71
   assert_success
-  link_target=$(readlink "$CVM_DIR/bin/claude")
-  [[ "$link_target" == *"2.1.71/claude" ]]
+  # Drop an env hook and confirm the wrapper sources it, then execs the binary.
+  mkdir -p "$CVM_DIR/env.d"
+  local marker; marker="$(mktemp)"
+  rm -f "$marker"
+  echo "touch '$marker'" > "$CVM_DIR/env.d/test.sh"
+  run "$CVM_DIR/bin/claude" --version
+  assert_success
+  assert_contains "Claude Code mock"
+  [ -f "$marker" ]
 }
 
 @test "install sets global default when first install" {

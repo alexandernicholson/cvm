@@ -119,12 +119,15 @@ load "../helpers/common"
   [ -x "$CVM_DIR/versions/2.1.71/claude" ]
 }
 
-@test "bin symlink is executable via PATH" {
-  set_global_default "2.1.71"
-  export PATH="$CVM_DIR/bin:$PATH"
-  run claude --version 2>/dev/null || run "$CVM_DIR/bin/claude"
-  # Just check the symlink resolves to something executable
+@test "bin wrapper is executable and runs the binary" {
+  make_fake_version "2.1.71"
+  run bash "$CVM_SCRIPT" use 2.1.71
+  assert_success
   [ -x "$CVM_DIR/bin/claude" ]
+  export PATH="$CVM_DIR/bin:$PATH"
+  run claude --version 2>/dev/null
+  assert_success
+  assert_contains "Claude Code mock v2.1.71"
 }
 
 # ── idempotency ───────────────────────────────────────────────────────────────
