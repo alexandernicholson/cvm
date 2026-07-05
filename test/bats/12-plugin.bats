@@ -158,6 +158,41 @@ EOF
   assert_failure
 }
 
+@test "plugin update --all updates every installed plugin" {
+  local a b
+  a="$(make_fixture_plugin plgA cmdA)"
+  b="$(make_fixture_plugin plgB cmdB)"
+  bash "$CVM_SCRIPT" plugin install "$a" >/dev/null
+  bash "$CVM_SCRIPT" plugin install "$b" >/dev/null
+
+  run bash "$CVM_SCRIPT" plugin update --all
+  assert_success
+  assert_contains "Updating plugin 'plgA'"
+  assert_contains "Updating plugin 'plgB'"
+}
+
+@test "plugin update with no args updates all" {
+  local a
+  a="$(make_fixture_plugin plgC cmdC)"
+  bash "$CVM_SCRIPT" plugin install "$a" >/dev/null
+
+  run bash "$CVM_SCRIPT" plugin update
+  assert_success
+  assert_contains "Updating plugin 'plgC'"
+}
+
+@test "plugin update --all continues past a broken plugin" {
+  local a
+  a="$(make_fixture_plugin plgD cmdD)"
+  bash "$CVM_SCRIPT" plugin install "$a" >/dev/null
+  # Corrupt one plugin's git repo so pull fails.
+  git -C "$CVM_DIR/plugins/plgD" remote remove origin 2>/dev/null || true
+
+  run bash "$CVM_SCRIPT" plugin update --all
+  assert_failure
+  assert_contains "Failed to update 'plgD'"
+}
+
 # ── init hook ─────────────────────────────────────────────────────────────────
 
 @test "install runs cvm_plugin_init if the plugin defines it" {

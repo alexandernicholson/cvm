@@ -3,7 +3,7 @@
 # https://github.com/alexandernicholson/cvm
 set -euo pipefail
 
-CVM_SELF_VERSION="0.2.1"
+CVM_SELF_VERSION="0.2.2"
 CVM_DIR="${CVM_DIR:-$HOME/.cvm}"
 CVM_BIN="$CVM_DIR/bin"
 CVM_VERSIONS="$CVM_DIR/versions"
@@ -759,20 +759,44 @@ _plugin_uninstall() {
   ok "Uninstalled plugin '$name'"
 }
 
-_plugin_update() {
-  local name="${1:-}"
-  [[ -n "$name" ]] || die "Usage: cvm plugin update <name>"
+# Update a single plugin by name. Returns non-zero on failure (does not die) so
+# `--all` can continue past a broken plugin.
+_plugin_update_one() {
+  local name="$1"
   local dest="$CVM_PLUGINS/$name"
-  [[ -d "$dest" ]] || die "Plugin '$name' is not installed"
-  command -v git &>/dev/null || die "git is required to update plugins"
+  [[ -d "$dest" ]] || { err "Plugin '$name' is not installed"; return 1; }
+  command -v git &>/dev/null || { err "git is required to update plugins"; return 1; }
   info "Updating plugin '$name'"
   if ! git -C "$dest" pull --ff-only 2>/dev/null; then
-    die "Failed to update '$name' (local changes or upstream moved). Reinstall with: cvm plugin uninstall $name && cvm plugin install <src>"
+    err "Failed to update '$name' (local changes or upstream moved). Reinstall: cvm plugin uninstall $name && cvm plugin install <src>"
+    return 1
   fi
   # Re-run the plugin's init hook so post-install setup (seeding, resolver
   # refresh) reflects the newly-pulled code.
   _plugin_run_init "$dest" "$name"
-  ok "Updated plugin '$name"
+  ok "Updated plugin '$name'"
+  return 0
+}
+
+_plugin_update() {
+  setup_dirs
+  # `cvm plugin update` or `cvm plugin update --all` updates every plugin.
+  if [[ -z "${1:-}" || "${1:-}" == "--all" || "${1:-}" == "-a" ]]; then
+    if [[ -z "$(ls -A "$CVM_PLUGINS" 2>/dev/null)" ]]; then
+      echo "No plugins installed."
+      return 0
+    fi
+    local pdir any=0 failed=0
+    for pdir in "$CVM_PLUGINS"/*/; do
+      [[ -d "$pdir" ]] || continue
+      any=1
+      _plugin_update_one "$(basename "$pdir")" || failed=1
+    done
+    [[ $any -eq 1 ]] || { echo "No plugins installed."; return 0; }
+    [[ $failed -eq 0 ]] || return 1
+    return 0
+  fi
+  _plugin_update_one "$1" || return 1
 }
 
 _plugin_help() {
@@ -785,7 +809,7 @@ ${BOLD}USAGE${RESET}
 ${BOLD}COMMANDS${RESET}
   ${BOLD}install${RESET} <owner/repo|url>   Install a plugin from GitHub (owner/repo) or any git URL
   ${BOLD}list${RESET}, ${BOLD}ls${RESET}                  List installed plugins
-  ${BOLD}update${RESET} <name>            Update a plugin (git pull --ff-only)
+  ${BOLD}update${RESET} [<name>|--all]   Update one plugin or all (git pull --ff-only)
   ${BOLD}uninstall${RESET} <name>         Remove a plugin
 
 ${BOLD}PLUGIN CONTRACT${RESET}
