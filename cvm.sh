@@ -3,7 +3,7 @@
 # https://github.com/alexandernicholson/cvm
 set -euo pipefail
 
-CVM_SELF_VERSION="0.2.0"
+CVM_SELF_VERSION="0.2.1"
 CVM_DIR="${CVM_DIR:-$HOME/.cvm}"
 CVM_BIN="$CVM_DIR/bin"
 CVM_VERSIONS="$CVM_DIR/versions"
@@ -590,6 +590,23 @@ cmd_self_update() {
   mv "$tmp" "$script_path"
   ok "CVM updated to latest version"
   "$script_path" --version
+  # Regenerate the `claude` shim so new wrapper logic (e.g. env.d sourcing) takes
+  # effect immediately. Invoked through the freshly-written script so the NEW
+  # code runs (the in-memory process is still the old version).
+  "$script_path" _refresh-shim 2>/dev/null || true
+}
+
+# Hidden command: regenerate the active `claude` shim for the currently
+# resolved version. Used by self-update so a script update lands the new wrapper
+# without requiring the user to re-run `cvm use`.
+_refresh_shim() {
+  local version
+  if version=$(cvm_resolve_version 2>/dev/null); then
+    if [[ -d "$CVM_VERSIONS/$version" ]]; then
+      install_claude_shim "$version"
+      info "Refreshed claude shim for $version"
+    fi
+  fi
 }
 
 cmd_self_uninstall() {
@@ -682,6 +699,28 @@ _plugin_install() {
   ok "Installed plugin '$name'"
   echo -e "  ${DIM}command:${RESET} cvm $pcmd   ${DIM}version:${RESET} ${pver:-unknown}"
   echo -e "  ${DIM}get started:${RESET} cvm $pcmd help"
+
+  # Run the plugin's post-install hook (cvm_plugin_init) if it defines one —
+  # e.g. cvp seeds a `default` profile and installs its env.d resolver here.
+  _plugin_run_init "$dest" "$name"
+}
+
+# Source a plugin's plugin.sh in an isolated subshell and, if it defines
+# cvm_plugin_init(), run it. Used on install and update. Failures are warned,
+# not fatal (the plugin still installed; its setup can be run manually).
+_plugin_run_init() {
+  local dest="$1" name="$2"
+  local init_rc=0
+  (
+    # shellcheck disable=SC1090
+    source "$dest/plugin.sh" 2>/dev/null || exit 0
+    if declare -F cvm_plugin_init >/dev/null 2>&1; then
+      cvm_plugin_init
+    fi
+  ) || init_rc=$?
+  if [[ $init_rc -ne 0 ]]; then
+    warn "Plugin '$name' init hook exited $init_rc — you may need to run its setup manually"
+  fi
 }
 
 _plugin_list() {
@@ -730,7 +769,10 @@ _plugin_update() {
   if ! git -C "$dest" pull --ff-only 2>/dev/null; then
     die "Failed to update '$name' (local changes or upstream moved). Reinstall with: cvm plugin uninstall $name && cvm plugin install <src>"
   fi
-  ok "Updated plugin '$name'"
+  # Re-run the plugin's init hook so post-install setup (seeding, resolver
+  # refresh) reflects the newly-pulled code.
+  _plugin_run_init "$dest" "$name"
+  ok "Updated plugin '$name"
 }
 
 _plugin_help() {
@@ -752,7 +794,8 @@ ${BOLD}PLUGIN CONTRACT${RESET}
   and defines a function ${BOLD}cvm_plugin_main()${RESET}, invoked with the args
   after the subcommand. cvm also sources ${BOLD}~/.cvm/env.d/*.sh${RESET} before
   exec'ing the real claude binary, so plugins can inject environment variables
-  (see the cvp profile plugin).
+  (see the cvp profile plugin). An optional ${BOLD}cvm_plugin_init()${RESET} hook
+  runs on install/update for one-shot setup (seeding, resolver install).
 
 ${BOLD}EXAMPLES${RESET}
   cvm plugin install alexandernicholson/cvp
@@ -945,6 +988,7 @@ main() {
     env)                    cmd_env "$@" ;;
     version|--version|-v)  echo "cvm $CVM_SELF_VERSION" ;;
     help|--help|-h)         cmd_help ;;
+    _refresh-shim)         _refresh_shim ;;
     *)
       # Fall through to a plugin that registers this subcommand.
       if _plugin_dispatch "$cmd" "$@"; then

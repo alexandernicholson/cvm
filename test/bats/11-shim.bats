@@ -72,3 +72,28 @@ install_wrapper() {
   assert_success
   assert_contains "Claude Code mock v2.1.71"
 }
+
+# ── _refresh-shim ─────────────────────────────────────────────────────────────
+
+@test "_refresh-shim regenerates an old symlink into the wrapper" {
+  # Simulate a pre-0.2 install: bin/claude is a direct symlink to the binary.
+  make_fake_version "2.1.71"
+  mkdir -p "$CVM_DIR/bin"
+  ln -sf "$CVM_DIR/versions/2.1.71/claude" "$CVM_DIR/bin/claude"
+  echo "2.1.71" > "$CVM_DIR/version"
+  [ -L "$CVM_DIR/bin/claude" ]
+
+  run bash "$CVM_SCRIPT" _refresh-shim
+  assert_success
+  # Now it's a wrapper (regular bash file), not a symlink.
+  [ -f "$CVM_DIR/bin/claude" ]
+  [ ! -L "$CVM_DIR/bin/claude" ]
+  head -1 "$CVM_DIR/bin/claude" | grep -q "bash"
+  grep -q "env.d" "$CVM_DIR/bin/claude"
+}
+
+@test "_refresh-shim is a no-op when no version is active" {
+  run bash "$CVM_SCRIPT" _refresh-shim
+  assert_success
+  [ ! -e "$CVM_DIR/bin/claude" ]
+}

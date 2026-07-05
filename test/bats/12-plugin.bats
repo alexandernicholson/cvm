@@ -157,3 +157,33 @@ EOF
   run bash "$CVM_SCRIPT" plugin update nope
   assert_failure
 }
+
+# ── init hook ─────────────────────────────────────────────────────────────────
+
+@test "install runs cvm_plugin_init if the plugin defines it" {
+  local parent; parent="$(mktemp -d)"
+  local repo="$parent/initplg"
+  mkdir -p "$repo"
+  cat > "$repo/plugin.sh" <<'EOF'
+CVM_PLUGIN_NAME="initplg"
+CVM_PLUGIN_COMMAND="initcmd"
+CVM_PLUGIN_VERSION="0.0.1"
+_CVP_INIT_MARKER="${CVM_DIR:-$HOME/.cvm}/init-ran"
+cvm_plugin_main() { echo "main"; }
+cvm_plugin_init() { echo "init-ran" > "$_CVP_INIT_MARKER"; }
+EOF
+  git -C "$repo" init -q
+  git -C "$repo" add plugin.sh
+  git -C "$repo" -c user.email=t@t -c user.name=t commit -qm x
+
+  run bash "$CVM_SCRIPT" plugin install "$repo"
+  assert_success
+  [ -f "$CVM_DIR/init-ran" ]
+}
+
+@test "install succeeds for a plugin without cvm_plugin_init" {
+  local repo; repo="$(make_fixture_plugin noinitplg noinitcmd)"
+  run bash "$CVM_SCRIPT" plugin install "$repo"
+  assert_success
+  assert_contains "Installed plugin"
+}
