@@ -14,7 +14,7 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"  # suppress Invoke-WebRequest progress bars
 
 # ── Constants ─────────────────────────────────────────────────────────────────
-$script:CVM_SELF_VERSION = "0.1.0"
+$script:CVM_SELF_VERSION = "0.2.3"
 $script:CvmDir      = if ($env:CVM_DIR) { $env:CVM_DIR } else { Join-Path $HOME ".cvm" }
 $script:CvmBin      = Join-Path $script:CvmDir "bin"
 $script:CvmVersions = Join-Path $script:CvmDir "versions"

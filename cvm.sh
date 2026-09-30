@@ -3,7 +3,7 @@
 # https://github.com/alexandernicholson/cvm
 set -euo pipefail
 
-CVM_SELF_VERSION="0.2.2"
+CVM_SELF_VERSION="0.2.3"
 CVM_DIR="${CVM_DIR:-$HOME/.cvm}"
 CVM_BIN="$CVM_DIR/bin"
 CVM_VERSIONS="$CVM_DIR/versions"
