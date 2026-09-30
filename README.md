@@ -256,6 +256,15 @@ Only `~/.cvm/bin` needs to be on `$PATH`.
 
 Claude Code native binaries are served by Anthropic from a GCS bucket. CVM downloads the binary for your platform, verifies its SHA256 checksum against the release manifest, then moves it to `~/.cvm/versions/<version>/claude`. A failed checksum leaves no partial install.
 
+Downloads use up to **8 concurrent HTTP range requests** by default, with at least 4 MiB per worker. Set `CVM_DOWNLOAD_THREADS` to an integer from `1` to `32` to tune concurrency; `1` forces a single sequential download:
+
+```bash
+CVM_DOWNLOAD_THREADS=4 cvm install latest
+```
+
+In PowerShell, set `$env:CVM_DOWNLOAD_THREADS = '4'` before running `cvm install latest`.
+Small downloads and servers without usable range metadata use a sequential transfer. Range responses are checked for exact offsets, byte counts, and remote identity before assembly; unusable ranges are discarded before a sequential retry within the original 300-second transfer budget. Final SHA256 verification is still mandatory, and temporary chunks are removed on completion or interruption. Parallel downloads temporarily need space for both chunks and the assembled binary.
+
 ---
 
 ## Supported Platforms
@@ -278,9 +287,10 @@ CVM auto-detects your platform, including Rosetta 2 on Apple Silicon Macs, musl 
 
 ## Requirements
 
-- **bash** 4.0 or later (macOS ships bash 3.2; install a newer version via Homebrew: `brew install bash`)
+- **bash** 3.2 or later (including the version shipped with macOS), or native **PowerShell** on Windows
 - **curl**
 - **python3** or **jq** (for JSON parsing in `ls-remote` and checksum extraction; `python3` is usually pre-installed)
+- **sha256sum** or **shasum** for mandatory binary checksum verification
 
 ---
 

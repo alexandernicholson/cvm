@@ -76,7 +76,210 @@ function Invoke-CvmGet([string]$url, [int]$timeout = 15) {
 }
 
 function Save-CvmFile([string]$url, [string]$dest, [int]$timeout = 300) {
-    Invoke-WebRequest -Uri $url -OutFile $dest -UseBasicParsing -TimeoutSec $timeout
+    $threads = 8
+    if ($env:CVM_DOWNLOAD_THREADS) {
+        if ($env:CVM_DOWNLOAD_THREADS -notmatch '^([1-9]|[12][0-9]|3[0-2])$' -or
+            -not [int]::TryParse($env:CVM_DOWNLOAD_THREADS, [ref]$threads) -or
+            $threads -lt 1 -or $threads -gt 32) {
+            throw "CVM_DOWNLOAD_THREADS must be an integer from 1 to 32."
+        }
+    }
+    if (-not ("CvmRangeDownloader" -as [type])) {
+        Add-Type -AssemblyName System.Net.Http
+        # C# 5 and .NET 4.5 APIs keep this single-file distribution usable on
+        # Windows PowerShell 5.1 without jobs, runspaces, or child processes.
+        $downloadSource = @'
+using System;
+using System.IO;
+using System.Net;
+using System.Net.Http;
+using System.Net.Http.Headers;
+using System.Threading;
+using System.Threading.Tasks;
+
+public static class CvmRangeDownloader
+{
+    private const long MinChunk = 4L * 1024 * 1024;
+
+    private static HttpRequestMessage Request(string url, long start, long end, string identity)
+    {
+        var request = new HttpRequestMessage(HttpMethod.Get, url);
+        request.Headers.TryAddWithoutValidation("Accept-Encoding", "identity");
+        if (start >= 0) {
+            request.Headers.Range = new RangeHeaderValue(start, end);
+            if (identity != null) request.Headers.TryAddWithoutValidation("If-Range", identity);
+        }
+        return request;
+    }
+
+    private static string Identity(HttpResponseMessage response)
+    {
+        if (response.Headers.ETag != null && !response.Headers.ETag.IsWeak)
+            return response.Headers.ETag.ToString();
+        if (response.Content.Headers.LastModified.HasValue)
+            return response.Content.Headers.LastModified.Value.ToString("R");
+        return null;
+    }
+
+    private static bool IsRange(HttpResponseMessage response, long start, long end, long total)
+    {
+        var range = response.Content.Headers.ContentRange;
+        return response.StatusCode == HttpStatusCode.PartialContent &&
+            range != null && range.Unit == "bytes" && range.From == start &&
+            range.To == end && range.Length == total &&
+            response.Content.Headers.ContentLength == end - start + 1 &&
+            response.Content.Headers.ContentEncoding.Count == 0;
+    }
+
+    private static async Task Copy(Stream input, Stream output, long expected, CancellationToken token)
+    {
+        // Framework network streams may ignore cancellation of a pending read.
+        // Closing the response stream also interrupts those reads at the deadline.
+        using (token.Register(input.Dispose)) {
+            var buffer = new byte[81920];
+            long copied = 0;
+            int count;
+            while ((count = await input.ReadAsync(buffer, 0, buffer.Length, token).ConfigureAwait(false)) != 0) {
+                copied += count;
+                if (expected >= 0 && copied > expected) throw new IOException("Unexpected download length.");
+                await output.WriteAsync(buffer, 0, count, token).ConfigureAwait(false);
+            }
+            if (expected >= 0 && copied != expected) throw new IOException("Incomplete download.");
+        }
+    }
+
+    private static async Task Range(HttpClient client, string url, string path, long start,
+        long end, long total, string identity, CancellationTokenSource group)
+    {
+        try {
+            using (var request = Request(url, start, end, identity))
+            using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, group.Token).ConfigureAwait(false)) {
+                if (!IsRange(response, start, end, total) || Identity(response) != identity ||
+                    response.RequestMessage.RequestUri.AbsoluteUri != url)
+                    throw new IOException("Server changed or refused a byte range.");
+                using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                using (var output = new FileStream(path, FileMode.CreateNew, FileAccess.Write, FileShare.None, 81920, true))
+                    await Copy(input, output, end - start + 1, group.Token).ConfigureAwait(false);
+            }
+        } catch {
+            group.Cancel();
+            throw;
+        }
+    }
+
+    private static async Task<bool> Parallel(HttpClient client, string url, string dest, int threads, CancellationToken token)
+    {
+        long total;
+        string identity;
+        using (var request = Request(url, 0, 0, null))
+        using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false)) {
+            var range = response.Content.Headers.ContentRange;
+            if (range == null || !range.Length.HasValue) return false;
+            total = range.Length.Value;
+            identity = Identity(response);
+            if (!IsRange(response, 0, 0, total) || identity == null) return false;
+            threads = (int)Math.Min(threads, total / MinChunk);
+            if (threads < 2) return false;
+            using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                await Copy(input, Stream.Null, 1, token).ConfigureAwait(false);
+            url = response.RequestMessage.RequestUri.AbsoluteUri;
+        }
+        string chunks = dest + ".parts-" + Guid.NewGuid().ToString("N");
+        Directory.CreateDirectory(chunks);
+        try {
+            using (var group = CancellationTokenSource.CreateLinkedTokenSource(token)) {
+                var tasks = new Task[threads];
+                long chunkSize = total / threads;
+                for (int i = 0; i < threads; i++) {
+                    long start = i * chunkSize;
+                    long end = i == threads - 1 ? total - 1 : start + chunkSize - 1;
+                    tasks[i] = Range(client, url, Path.Combine(chunks, i.ToString()),
+                        start, end, total, identity, group);
+                }
+                await Task.WhenAll(tasks).ConfigureAwait(false);
+            }
+            using (var output = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true)) {
+                for (int i = 0; i < threads; i++) {
+                    using (var input = new FileStream(Path.Combine(chunks, i.ToString()), FileMode.Open, FileAccess.Read, FileShare.Read, 81920, true))
+                        await Copy(input, output, input.Length, token).ConfigureAwait(false);
+                }
+            }
+            return true;
+        } finally {
+            Directory.Delete(chunks, true);
+        }
+    }
+
+    public static async Task Download(string url, string dest, int threads, CancellationToken token)
+    {
+#if CVM_FRAMEWORK
+        // Framework HttpClient otherwise limits each origin to two connections.
+        int previousLimit = ServicePointManager.DefaultConnectionLimit;
+        ServicePointManager.DefaultConnectionLimit = Math.Max(previousLimit, threads);
+        var origin = ServicePointManager.FindServicePoint(new Uri(url));
+        int previousOriginLimit = origin.ConnectionLimit;
+        origin.ConnectionLimit = Math.Max(previousOriginLimit, threads);
+#endif
+        try {
+            using (var handler = new HttpClientHandler { AutomaticDecompression = DecompressionMethods.None })
+            using (var client = new HttpClient(handler)) {
+#if !CVM_FRAMEWORK
+                handler.MaxConnectionsPerServer = threads;
+#endif
+                client.Timeout = Timeout.InfiniteTimeSpan;
+                if (threads > 1) {
+                    try {
+                        if (await Parallel(client, url, dest, threads, token).ConfigureAwait(false)) return;
+                    } catch {
+                        token.ThrowIfCancellationRequested();
+                        // Retry as one response, never concatenate invalid or changed ranges.
+                    }
+                }
+                token.ThrowIfCancellationRequested();
+                using (var request = Request(url, -1, -1, null))
+                using (var response = await client.SendAsync(request, HttpCompletionOption.ResponseHeadersRead, token).ConfigureAwait(false)) {
+                    if (response.StatusCode != HttpStatusCode.OK || response.Content.Headers.ContentEncoding.Count != 0)
+                        throw new IOException("Download request failed.");
+                    using (var input = await response.Content.ReadAsStreamAsync().ConfigureAwait(false))
+                    using (var output = new FileStream(dest, FileMode.Create, FileAccess.Write, FileShare.None, 81920, true))
+                        await Copy(input, output, response.Content.Headers.ContentLength ?? -1, token).ConfigureAwait(false);
+                }
+            }
+        } catch {
+            if (File.Exists(dest)) File.Delete(dest);
+            throw;
+        } finally {
+#if CVM_FRAMEWORK
+            ServicePointManager.DefaultConnectionLimit = previousLimit;
+            origin.ConnectionLimit = previousOriginLimit;
+            #endif
+        }
+    }
+}
+'@
+        if ($PSVersionTable.PSVersion.Major -lt 6) {
+            $downloadSource = "#define CVM_FRAMEWORK`n" + $downloadSource
+            Add-Type -ReferencedAssemblies System.Net.Http -TypeDefinition $downloadSource
+        } else {
+            Add-Type -TypeDefinition $downloadSource
+        }
+    }
+    $cancel = New-Object System.Threading.CancellationTokenSource
+    $transfer = $null
+    try {
+        $cancel.CancelAfter([TimeSpan]::FromSeconds($timeout))
+        $transfer = [CvmRangeDownloader]::Download($url, $dest, $threads, $cancel.Token)
+        # Short waits let PowerShell service Ctrl-C; finally cancels and drains
+        # all streams before the install caller can remove its temporary file.
+        while (-not $transfer.IsCompleted) { Start-Sleep -Milliseconds 50 }
+        [void]$transfer.GetAwaiter().GetResult()
+    } finally {
+        $cancel.Cancel()
+        if ($null -ne $transfer) {
+            try { [void]$transfer.GetAwaiter().GetResult() } catch {}
+        }
+        $cancel.Dispose()
+    }
 }
 
 # ── JSON helpers ──────────────────────────────────────────────────────────────
@@ -114,9 +317,9 @@ function Sort-SemVer([string[]]$versions) {
 
 # ── Checksum Verification ─────────────────────────────────────────────────────
 function Test-Checksum([string]$file, [string]$expected) {
-    if (-not $expected) {
-        Write-Warn "No checksum in manifest, skipping verification"
-        return $true
+    if ($expected -notmatch '^[a-fA-F0-9]{64}$') {
+        Write-Err "Missing or invalid SHA256 checksum in manifest"
+        return $false
     }
     $actual = (Get-FileHash -Path $file -Algorithm SHA256).Hash.ToLower()
     if ($actual -ne $expected.ToLower()) {

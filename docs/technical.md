@@ -300,12 +300,14 @@ Every binary download is verified against the SHA256 checksum published in `mani
 # Pseudocode
 manifest=$(curl .../VERSION/manifest.json)
 checksum=$(extract .platforms[PLATFORM].checksum from manifest)
-curl .../VERSION/PLATFORM/claude -o TMPFILE
+download_binary .../VERSION/PLATFORM/claude TMPFILE
 sha256(TMPFILE) == checksum  || die "Checksum mismatch"
 mv TMPFILE ~/.cvm/versions/VERSION/claude
 ```
 
-If `sha256sum` is not available, `shasum -a 256` is tried. If neither is available, a warning is emitted and verification is skipped. If verification fails, the temp file is deleted and installation aborts — no partial install is left behind.
+If `sha256sum` is not available, `shasum -a 256` is tried. If neither is available, installation aborts. Missing or malformed manifest checksums also abort installation. If verification fails, the temp file is deleted and installation aborts — no partial install is left behind.
+
+The Bash downloader uses native curl subprocesses, bounded by `CVM_DOWNLOAD_THREADS` (default 8, range 1–32). A value of 1 bypasses probing. Otherwise, a redirect-aware HEAD request checks the final response's Content-Length, byte-range support, and strong ETag (or Last-Modified). Missing usable metadata or fewer than two 4 MiB chunks selects the sequential path. Each range uses `If-Range` and identity encoding, and must return HTTP 206, the exact requested Content-Range and byte count, and the original validator. No HTTP 200 range response is concatenated. Failed range workers are cancelled and all chunks discarded before a full sequential retry. Probe, workers, and fallback share a 300-second transfer budget; interruption cancels transfers and removes staging files. Chunks are concatenated in offset order, then the existing final SHA256 gate runs before the atomic install move.
 
 ---
 
@@ -319,7 +321,7 @@ It tries parsers in this order:
 2. `python3` — universal fallback
 3. `python` — older system Python fallback
 
-For `ls-remote`, if no parser is available, CVM exits with an error. For checksum extraction, if no parser is available, verification is skipped with a warning (so install still works on minimal systems).
+If no parser is available, both version listing and checksum extraction fail; installation never proceeds without checksum verification.
 
 ---
 

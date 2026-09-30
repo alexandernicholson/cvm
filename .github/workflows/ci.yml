@@ -38,7 +38,7 @@ jobs:
         shell: pwsh
         run: |
           $config = New-PesterConfiguration
-          $config.Run.Path = "test/pester/CVM.Tests.ps1"
+          $config.Run.Path = "test/pester"
           $config.Output.Verbosity = "Detailed"
           $config.Run.Exit = $true
           Invoke-Pester -Configuration $config

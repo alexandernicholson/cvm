@@ -6,6 +6,7 @@
 
 BeforeAll {
     $script:CvmScript = (Resolve-Path (Join-Path $PSScriptRoot "..\..\cvm.ps1")).Path
+    $script:BinaryName = if ($IsWindows -or $env:OS -eq "Windows_NT") { "claude.exe" } else { "claude" }
 
     # ── Helper functions ───────────────────────────────────────────────────────
     # Defined inside BeforeAll so they are in scope during test execution.
@@ -44,7 +45,7 @@ BeforeAll {
     function global:New-FakeVersion([string]$Version) {
         $dir = Join-Path $env:CVM_DIR "versions" $Version
         $null = New-Item -ItemType Directory -Path $dir -Force
-        $bin = Join-Path $dir "claude.exe"
+        $bin = Join-Path $dir $script:BinaryName
         Set-Content -Path $bin -Value "fake" -NoNewline
         return $bin
     }
@@ -53,7 +54,7 @@ BeforeAll {
         $src = New-FakeVersion $Version
         $binDir = Join-Path $env:CVM_DIR "bin"
         $null = New-Item -ItemType Directory -Path $binDir -Force
-        $link = Join-Path $binDir "claude.exe"
+        $link = Join-Path $binDir $script:BinaryName
         if (Test-Path $link) { Remove-Item $link -Force }
         try   { $null = New-Item -ItemType HardLink -Path $link -Target $src }
         catch { Copy-Item $src $link -Force }
@@ -132,12 +133,11 @@ Describe "CVM" {
     # ── Platform detection ────────────────────────────────────────────────────
 
     Describe "Platform detection" {
-        It "runs on Windows and detects win32-x64 binary name" {
-            # Pre-populate a win32-x64 style version and verify 'which' returns .exe
+        It "detects the platform-appropriate binary name" {
             Set-GlobalDefault "2.1.71"
             $out = Invoke-Cvm "which"
             $script:LastExitCode | Should -Be 0
-            $out | Should -Match 'claude\.exe'
+            (Split-Path $out.Trim() -Leaf) | Should -Be $script:BinaryName
         }
     }
 
@@ -233,7 +233,7 @@ Describe "CVM" {
             $out = Invoke-Cvm "which"
             $script:LastExitCode | Should -Be 0
             $out | Should -Match '2\.1\.71'
-            $out | Should -Match 'claude\.exe'
+            (Split-Path $out.Trim() -Leaf) | Should -Be $script:BinaryName
         }
 
         It "which path exists as a file" {
@@ -301,10 +301,10 @@ Describe "CVM" {
             $ver | Should -Be "2.1.71"
         }
 
-        It "use creates claude.exe link in bin" {
+        It "use creates the native binary link in bin" {
             New-FakeVersion "2.1.71" | Out-Null
             Invoke-Cvm "use" "2.1.71" | Out-Null
-            Test-Path (Join-Path $env:CVM_DIR "bin" "claude.exe") | Should -Be $true
+            Test-Path (Join-Path $env:CVM_DIR "bin" $script:BinaryName) | Should -Be $true
         }
 
         It "use prints confirmation" {

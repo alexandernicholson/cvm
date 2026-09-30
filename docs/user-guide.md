@@ -316,6 +316,7 @@ Then remove the PATH line from your shell config file.
 |---|---|
 | `CVM_VERSION` | Override the active version for the current session/command |
 | `CVM_DIR` | Override the CVM home directory (default: `~/.cvm`) |
+| `CVM_DOWNLOAD_THREADS` | Concurrent download workers, integer `1`–`32` (default `8`); `1` forces sequential downloads |
 
 ---
 

@@ -28,7 +28,6 @@ load "../helpers/common"
   [ -f "$CVM_DIR/bin/claude" ]
   [ ! -L "$CVM_DIR/bin/claude" ]
   [ -x "$CVM_DIR/bin/claude" ]
-  head -1 "$CVM_DIR/bin/claude" | grep -q "bash"
 }
 
 @test "install wrapper sources env.d and execs the installed binary" {

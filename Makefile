@@ -27,7 +27,7 @@ test-ps:
 	@command -v pwsh >/dev/null 2>&1 || { echo "Error: pwsh not installed"; exit 1; }
 	@pwsh -NoLogo -NonInteractive -Command "\
 		\$$config = New-PesterConfiguration; \
-		\$$config.Run.Path = 'test/pester/CVM.Tests.ps1'; \
+		\$$config.Run.Path = 'test/pester'; \
 		\$$config.Output.Verbosity = 'Detailed'; \
 		\$$config.Run.Exit = \$$true; \
 		Invoke-Pester -Configuration \$$config"

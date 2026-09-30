@@ -95,7 +95,7 @@ _py() {
   fi
 }
 
-# Extract the SHA256 checksum for $platform from manifest JSON on stdin
+# Extract the SHA256 checksum for $platform from manifest JSON.
 checksum_from_manifest() {
   local platform="$1"
   local json="$2"
@@ -103,15 +103,14 @@ checksum_from_manifest() {
   if command -v jq &>/dev/null; then
     echo "$json" | jq -r ".platforms[\"$platform\"].checksum // empty"
   elif _py -c "" 2>/dev/null; then
-    _py - "$platform" <<'PYEOF'
+    printf '%s\n' "$json" | _py -c '
 import sys, json
-platform = sys.argv[1]
 data = json.load(sys.stdin)
-print(data.get("platforms", {}).get(platform, {}).get("checksum", ""))
-PYEOF
-    echo "$json" | _py - "$platform"
+print(data.get("platforms", {}).get(sys.argv[1], {}).get("checksum", ""))
+' "$platform"
   else
-    echo ""  # skip verification gracefully
+    err "Checksum extraction requires jq or Python"
+    return 1
   fi
 }
 
@@ -175,9 +174,9 @@ print("\n".join(vs))
 verify_checksum() {
   local file="$1" expected="$2"
 
-  if [[ -z "$expected" ]]; then
-    warn "No checksum in manifest, skipping verification"
-    return 0
+  if [[ ! "$expected" =~ ^[[:xdigit:]]{64}$ ]]; then
+    err "Missing or invalid SHA256 checksum in manifest"
+    return 1
   fi
 
   local actual
@@ -186,8 +185,8 @@ verify_checksum() {
   elif command -v shasum &>/dev/null; then
     actual=$(shasum -a 256 "$file" | awk '{print $1}')
   else
-    warn "sha256sum/shasum not found, skipping checksum verification"
-    return 0
+    err "Checksum verification requires sha256sum or shasum"
+    return 1
   fi
 
   if [[ "$actual" != "$expected" ]]; then
@@ -197,6 +196,156 @@ verify_checksum() {
     return 1
   fi
 }
+
+# Read only the final response header block (redirects/proxy handshakes may precede it).
+# Variables are local to the caller; header names are case-insensitive in Bash 3.2.
+download_headers() {
+  local line name value
+  dl_status="" dl_length="" dl_range="" dl_accept="" dl_etag="" dl_modified="" dl_encoding=""
+  [[ -f "$1" ]] || return 1
+  while IFS= read -r line; do
+    line="${line%$'\r'}"
+    case "$line" in
+      HTTP/*)
+        dl_status="${line#* }"; dl_status="${dl_status%% *}"
+        dl_length="" dl_range="" dl_accept="" dl_etag="" dl_modified="" dl_encoding=""
+        ;;
+      *:*)
+        name="${line%%:*}"; value="${line#*:}"
+        value="${value#"${value%%[!$' \t']*}"}"
+        case "$name" in
+          [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ll][Ee][Nn][Gg][Tt][Hh]) dl_length="$value" ;;
+          [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Rr][Aa][Nn][Gg][Ee]) dl_range="$value" ;;
+          [Aa][Cc][Cc][Ee][Pp][Tt]-[Rr][Aa][Nn][Gg][Ee][Ss]) dl_accept="$value" ;;
+          [Ee][Tt][Aa][Gg]) dl_etag="$value" ;;
+          [Ll][Aa][Ss][Tt]-[Mm][Oo][Dd][Ii][Ff][Ii][Ee][Dd]) dl_modified="$value" ;;
+          [Cc][Oo][Nn][Tt][Ee][Nn][Tt]-[Ee][Nn][Cc][Oo][Dd][Ii][Nn][Gg]) dl_encoding="$value" ;;
+        esac
+        ;;
+    esac
+  done < "$1"
+}
+
+download_threads() {
+  local threads="${CVM_DOWNLOAD_THREADS-8}"
+  case "$threads" in
+    [1-9]|[12][0-9]|3[0-2]) printf '%s\n' "$threads" ;;
+    *) err "CVM_DOWNLOAD_THREADS must be an integer from 1 to 32"; return 1 ;;
+  esac
+}
+
+# A subshell owns all transfer processes and staging files, without replacing caller traps.
+download_binary() (
+  # Subshell globals survive until EXIT traps run on macOS Bash 3.2; function
+  # locals have already unwound by then. The subshell prevents caller leakage.
+  url="$1" destination="$2" work="" success=0 failed=0
+  pids=() starts=() ends=() files=()
+  threads=$(download_threads) || exit 1
+  deadline=$((SECONDS + 300))
+  work=$(mktemp -d "${destination}.parts-XXXXXX") || exit 1
+  download_cleanup() {
+    for pid in "${pids[@]:-}"; do
+      [[ -z "$pid" ]] || kill "$pid" 2>/dev/null || :
+    done
+    for pid in "${pids[@]:-}"; do
+      [[ -z "$pid" ]] || wait "$pid" 2>/dev/null || :
+    done
+    rm -rf "$work"
+    [[ "$success" -eq 1 ]] || rm -f "$destination"
+  }
+  trap download_cleanup EXIT
+  trap 'exit 130' INT
+  trap 'exit 143' TERM
+  trap 'exit 129' HUP
+
+  workers=1
+  if [[ "$threads" -gt 1 ]]; then
+    curl -fsL --head --max-time 15 -H 'Accept-Encoding: identity' \
+      -D "$work/probe" -o /dev/null "$url" 2>/dev/null &
+    pids[0]=$!
+    if ! wait "${pids[0]}"; then rm -f "$work/probe"; fi
+    pids[0]=""
+  fi
+  if [[ "$threads" -gt 1 ]] && download_headers "$work/probe"; then
+    # Limit numeric width before arithmetic; avoid overflow and octal interpretation.
+    if [[ "$dl_status" == 200 && "$dl_length" =~ ^[1-9][0-9]{0,11}$ &&
+          "$dl_accept" == bytes && ( -z "$dl_encoding" || "$dl_encoding" == identity ) ]]; then
+      size="$dl_length"
+      etag="$dl_etag"; modified="$dl_modified"; validator=""
+      case "$etag" in
+        \"*\") validator="$etag" ;;
+        *) [[ -z "$modified" ]] || validator="$modified" ;;
+      esac
+      if [[ -n "$validator" ]]; then
+        workers=$((size / 4194304))
+        [[ "$workers" -le "$threads" ]] || workers="$threads"
+      fi
+    fi
+  fi
+
+  if [[ "$workers" -gt 1 ]]; then
+    chunk=$((size / workers))
+    for ((i=0; i<workers; i++)); do
+      remaining=$((deadline - SECONDS))
+      [[ "$remaining" -gt 0 ]] || exit 1
+      start=$((i * chunk)); end=$((start + chunk - 1))
+      [[ "$i" -ne $((workers - 1)) ]] || end=$((size - 1))
+      starts[$i]="$start"; ends[$i]="$end"; files[$i]="$work/$i"
+      curl -fsL --max-time "$remaining" --max-filesize "$((end - start + 1))" \
+        -H 'Accept-Encoding: identity' -H "If-Range: $validator" \
+        --range "$start-$end" -D "$work/$i.headers" -o "$work/$i" "$url" 2>/dev/null &
+      pids[$i]=$!
+    done
+    pending="$workers"
+    while [[ "$pending" -gt 0 && "$failed" -eq 0 ]]; do
+      [[ "$SECONDS" -lt "$deadline" ]] || exit 1
+      for ((i=0; i<workers; i++)); do
+        pid="${pids[$i]}"
+        [[ -n "$pid" ]] || continue
+        if ! kill -0 "$pid" 2>/dev/null; then
+          if ! wait "$pid"; then failed=1; fi
+          pids[$i]=""; pending=$((pending - 1))
+          if [[ "$failed" -eq 0 ]]; then
+            download_headers "$work/$i.headers" || failed=1
+            bytes=$(wc -c < "$work/$i") || failed=1
+            if [[ "$dl_status" != 206 ||
+                  "$dl_range" != "bytes ${starts[$i]}-${ends[$i]}/$size" ||
+                  "$bytes" -ne $((ends[$i] - starts[$i] + 1)) ||
+                  ( -n "$dl_encoding" && "$dl_encoding" != identity ) ||
+                  ( "$validator" == "$etag" && "$dl_etag" != "$etag" ) ||
+                  ( "$validator" != "$etag" && "$dl_modified" != "$modified" ) ]]; then
+              failed=1
+            fi
+          fi
+          [[ "$failed" -eq 0 ]] || break
+        fi
+      done
+      [[ "$pending" -eq 0 || "$failed" -ne 0 ]] || sleep 0.1
+    done
+    if [[ "$failed" -eq 0 ]]; then
+      cat "${files[@]}" > "$destination" || exit 1
+      success=1
+      exit 0
+    fi
+    # Discard every chunk before restarting, never splice different representations.
+    for pid in "${pids[@]}"; do
+      [[ -z "$pid" ]] || kill "$pid" 2>/dev/null || :
+    done
+    for pid in "${pids[@]}"; do
+      [[ -z "$pid" ]] || wait "$pid" 2>/dev/null || :
+    done
+    pids=()
+    rm -f "${files[@]}"
+  fi
+  remaining=$((deadline - SECONDS))
+  [[ "$remaining" -gt 0 ]] || exit 1
+  curl -fL --max-time "$remaining" --progress-bar \
+    -H 'Accept-Encoding: identity' "$url" -o "$destination" 2>/dev/null &
+  pids[0]=$!
+  wait "${pids[0]}" || exit 1
+  pids[0]=""
+  success=1
+)
 
 # ── Version Channel Resolution ────────────────────────────────────────────────
 # Resolves "latest" or "stable" -> actual semver. Passes through anything else.
@@ -341,6 +490,7 @@ setup_dirs() {
 cmd_install() {
   local spec="${1:-latest}"
   setup_dirs
+  download_threads >/dev/null || return 1
 
   info "Resolving version: $spec"
   local version
@@ -376,7 +526,8 @@ cmd_install() {
     || die "Failed to fetch manifest for $version. Version may not exist."
 
   local checksum
-  checksum=$(checksum_from_manifest "$platform" "$manifest")
+  checksum=$(checksum_from_manifest "$platform" "$manifest") \
+    || die "Failed to extract manifest checksum."
 
   # Download binary to cache (atomic: download then move)
   local binary_url="$CVM_DIST_BASE/$version/$platform/$bin_name"
@@ -384,9 +535,9 @@ cmd_install() {
   tmp_file=$(mktemp "$CVM_CACHE/claude-${version}-XXXXXX")
 
   info "Downloading claude $version..."
-  if ! curl -fL --max-time 300 --progress-bar "$binary_url" -o "$tmp_file"; then
+  if ! download_binary "$binary_url" "$tmp_file"; then
     rm -f "$tmp_file"
-    die "Download failed: $binary_url"
+    die "Download failed."
   fi
 
   # Verify
